@@ -1,0 +1,75 @@
+namespace Osysharp.Charts;
+
+/// The same data as rows: the honest fallback, and the accessibility answer.
+///
+/// Better than more `aria-label`s. Every mark already names itself ("Revenue: £42,000"), which is right when a reader
+/// is on that mark and useless for the questions they actually have: which month was highest? what were the other
+/// five? Those are answered by structure: `UiRole.Grid` / `UiRole.GridRow` / `UiRole.ColumnHeader` /
+/// `UiRole.GridCell` turn nested boxes into something a screen reader can read by position and announce with its
+/// column header, and something a sighted reader can select and copy.
+///
+/// It reuses the marks' own vocabulary. Cells go through the same `Formatted(value, axis)` as the tick labels, the
+/// hover readout, the on-mark values and every accessible name, and columns are titled with the series' own `Label`.
+/// A second formatting path could disagree with the picture: the axis saying `£42K` while the table says `42000`.
+///
+/// It follows the legend: a series switched off leaves the table too. The table is the same data, and a table that
+/// disagrees with the chart beside it is worse than no table.
+[AllowAnonymous]
+[Composable]
+[Part]
+component ChartTable(ChartCtx c, string caption) {
+  render {
+    // The visible subset, for the reason above — and asked for ONCE here rather than in both loops, because a header
+    // row and a body row that computed it separately is exactly how a column ends up titled with one series and
+    // filled with another.
+    var shown = VisibleMarks(c.Marks, c.Hidden);
+    Stack(gap: 0, role: UiRole.Grid, label: caption) {
+      Row(py: 1, gap: 2, borderBW: 1, border: Colors.ChartBorder, role: UiRole.GridRow) {
+        // The category column has no name of its own — a chart is given `labels`, never a word for what they ARE.
+        // "Category" is the honest generic; leaving it empty would announce an unnamed column.
+        Box(grow: 1, basis: 0, role: UiRole.ColumnHeader) {
+          Text("Category", fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: Colors.ChartMuted);
+        }
+        foreach (var m in shown) {
+          // `justify: End` on the row, not `align: End` on the Text: a Text is shrink-to-fit, so aligning its own
+          // contents aligns nothing (see the axis title in Chart.osy).
+          Row(grow: 1, basis: 0, justify: Justify.End, role: UiRole.ColumnHeader) {
+            Text(ColumnTitle(m), fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: Colors.ChartMuted);
+          }
+        }
+      }
+      foreach (var i in Enumerable.Range(0, c.Labels.Length)) {
+        Row(py: 1, gap: 2, borderBW: 1, border: Colors.ChartGrid, role: UiRole.GridRow) {
+          Box(grow: 1, basis: 0, role: UiRole.GridCell) {
+            Text(c.Labels[i], fontSize: FontSize.ChartTick, color: Colors.ChartInk);
+          }
+          foreach (var m in shown) {
+            Row(grow: 1, basis: 0, justify: Justify.End, role: UiRole.GridCell) {
+              // `TabularNums` because this is a column of numbers: proportional digits make `121` and `999` different
+              // widths, and the column stops reading as a column.
+              Text(CellValue(m, i, c.Axis), fontSize: FontSize.ChartTick, color: Colors.ChartInk, fontVariant: FontVariant.TabularNums);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/// What one column is called.
+///
+/// A candle's column says `(close)`, because `Values` is the close, and a column headed just "AAPL" would hide that
+/// four numbers per session were reduced to one. One column per series keeps the header row and the body rows in
+/// structural lockstep; four columns per candle would need two loops that agree on how many cells a series
+/// contributes.
+string ColumnTitle(Mark m) {
+  return m is CandleMark ? $"{m.Label} (close)" : m.Label;
+}
+
+/// One cell.
+///
+/// A series shorter than the labels gets an em dash, not a zero and not a blank. Zero is a value and would be read
+/// as one; a blank reads as a rendering failure.
+string CellValue(Mark m, int i, AxisDef axis) {
+  return i < m.Values.Length ? Formatted(m.Values[i], axis) : "—";
+}

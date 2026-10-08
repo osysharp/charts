@@ -1,0 +1,91 @@
+namespace Osysharp.Charts;
+
+/// The legend: a swatch and a name per series.
+///
+/// Always present for two or more series, because colour-matching alone does not identify a series: a reader with a
+/// colour-vision deficiency, a greyscale print and a `forced-colors` display all lose the mapping, and the name does
+/// not. The text uses an ink token, never the series colour: a light hue is illegible as text, and identity comes
+/// from the swatch beside the word.
+///
+/// When it is interactive, every entry is a real button, not a `Box` with a click handler: a button is what a
+/// keyboard reaches with Tab and what a screen reader announces as pressable. A legend that toggles is a set of
+/// switches, so it says so.
+///
+/// When it is not interactive there is no button at all. The two shapes are separate on purpose: a button that
+/// ignores its click, because the chart is a static picture, would be a control that looks live and does nothing.
+[AllowAnonymous]
+[Composable]
+[Part]
+component SeriesLegend(Mark[] marks, string[] hidden, bool interactive, bool vertical, Action<string> onToggle) {
+  render {
+    if (vertical) {
+      Stack(gap: 2, role: UiRole.List, label: "Series") { LegendEntries(marks: marks, hidden: hidden, interactive: interactive, onToggle: onToggle); }
+    } else {
+      Row(gap: 4, wrap: Wrapping.Wrap, role: UiRole.List, label: "Series") { LegendEntries(marks: marks, hidden: hidden, interactive: interactive, onToggle: onToggle); }
+    }
+  }
+}
+
+/// The entries themselves, shared by both arrangements so a vertical legend cannot say something different from a
+/// horizontal one.
+[AllowAnonymous]
+[Composable]
+[Part]
+component LegendEntries(Mark[] marks, string[] hidden, bool interactive, Action<string> onToggle) {
+  render {
+    foreach (var m in marks) {
+      if (interactive) {
+        LegendToggle(label: m.Label, color: ColorOf(m, SlotOf(marks, m)), on: !IsHidden(hidden, m.Label),
+                     onToggle: onToggle);
+      } else {
+        Row(gap: 2, align: Align.Center, role: UiRole.ListItem) {
+          Box(w: 10, h: 10, rounded: 6, bg: ColorOf(m, SlotOf(marks, m)), shrink: 0);
+          Text(m.Label, fontSize: FontSize.ChartTick, color: Colors.ChartMuted);
+        }
+      }
+    }
+  }
+}
+
+/// One switchable series.
+///
+/// A hidden series is dimmed, not removed. The entry stays in place, at the same size and in the same order, because
+/// the way back is what the reader has to find, and a legend that reflowed on click would move the next entry under
+/// the pointer. The swatch loses its fill and keeps its outline, so the colour mapping survives.
+[AllowAnonymous]
+[Composable]
+[Part]
+component LegendToggle(string label, string color, bool on, Action<string> onToggle) {
+  variants { base { Cursor = Cursor.Pointer; } }
+  render {
+    // The state is `pressed`, and the name is just the series. A toggle that stays down is exactly what `aria-pressed`
+    // describes, so the accessible name stays the thing the entry names. Folding the state into the name
+    // ("Revenue: hidden") would make the name change under the reader, which a name should not do.
+    Pressable(role: UiRole.ListItem, label: label, pressed: !on, onClick: () => onToggle(label)) {
+      // A hidden series is dimmed and struck through: two channels, because opacity alone is a weak signal on a light
+      // hue and disappears entirely in a greyscale print or a forced-colors display.
+      Row(gap: 2, align: Align.Center, opacity: on ? 1.0 : 0.45) {
+        Box(w: 10, h: 10, rounded: 6, bg: on ? color : Colors.ChartSurface, borderW: 2, border: color, shrink: 0);
+        Text(label, fontSize: FontSize.ChartTick, color: Colors.ChartMuted,
+             textDecoration: on ? TextDecoration.None : TextDecoration.LineThrough);
+      }
+    }
+  }
+}
+
+/// Is this series switched off?
+bool IsHidden(string[] hidden, string label) { return hidden.Contains(label); }
+
+/// The hidden set with `label` flipped — the whole of what a toggle does.
+///
+/// Returns a NEW array rather than mutating one: the field it lands in is what the chart re-derives from, and a
+/// mutation in place is a change the reactive graph has no edge for.
+string[] Toggled(string[] hidden, string label) {
+  if (hidden.Contains(label)) { return hidden.Where(h => h != label).ToArray(); }
+  var one = new List<string>();
+  one.Add(label);
+  return hidden.Concat(one).ToArray();
+}
+
+/// The legend in force — the one the author declared, or the default when they declared none.
+LegendDef LegendOf(LegendDef[] legends) { return legends.FirstOrDefault() ?? new LegendDef(); }

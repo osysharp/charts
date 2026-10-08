@@ -1,0 +1,239 @@
+namespace Osysharp.Charts;
+
+// ── share of a whole ─────────────────────────────────────────────────────────────────────────────────────
+//
+// A sibling component, not another `Kind` on `Mark`. Much of what `Chart` shares between its marks is wrong for a
+// pie: a pie has no value axis, no category axis and no gridlines; its scale is share of the total rather than a
+// domain with a `lo` and a `top`; `ScaleTop` rounding up to a nice number would make the slices sum to less than the
+// circle; and a pinned `Min`/`Max` means nothing. As a mark kind, every one of those would need an "unless it is a
+// pie" branch. It is a different picture, so it is a different component.
+//
+// It needs nothing beyond `Path`. `Path` takes `points`/`fill`/`closed`, so a pie slice is an ordinary closed polygon
+// (centre → arc → back) and a donut slice is the outer arc forward plus the inner arc reversed. At about 3° per
+// segment the curve looks smooth at any size a chart is drawn at.
+//
+// No `stretch: true` here, which is the one place a pie differs mechanically from the other marks in the kit. A
+// stretched path sets `preserveAspectRatio="none"`, which maps a nominal square onto whatever box it is given:
+// correct for a line, but a circle would become an ellipse. So the geometry is computed at the size the pie is drawn
+// at, and `size` is a real number of pixels rather than a nominal space.
+
+/// One slice.
+public class SliceDef {
+  /// What the legend and the accessible name call this slice. Required: a slice nobody can name is a colour.
+  public string Label;
+  /// Its size. A share of the total, so a negative is meaningless and is clamped away.
+  public double Value;
+  /// Override the palette slot. Null takes this slice's position in the fixed order.
+  public string? Color;
+  /// Pull this slice out of the ring — the "exploded" wedge.
+  ///
+  /// One slice, not all of them. Exploding every wedge is a common spreadsheet default and communicates nothing: it
+  /// leaves the same picture with worse angles to compare. Exploding one says "this is the one I am talking about".
+  public bool Explode = false;
+}
+
+/// A slice of a `Pie`. Written as a child, like a chart's marks:
+///
+///     Pie(title: "Revenue by channel", hole: 0.55) {
+///       Slice(label: "Direct", value: 42000.0);
+///       Slice(label: "Partner", value: 31000.0, explode: true);
+///     }
+[AllowAnonymous] component Slice(string label, double value, string? color = null, bool explode = false) : SliceDef;
+
+/// A PIE, or a DONUT — one component, because they are one picture with a hole of a different size. `hole: 0.0` is a
+/// pie and `hole: 0.55` is a donut; anything between is the same chart with a wider or narrower ring.
+///
+/// ⚠ A pie is the weakest chart for comparing values. People compare angles badly and lengths well, so `Column`
+/// beats it at "which is biggest" every time. What a pie does better than a bar chart is say "these are the parts of
+/// one thing". Use it for a handful of parts of an obvious whole; use a bar chart when the question is "by how much".
+///
+/// The legend carries each slice's value AND its share, because reading either off the angles is exactly the thing
+/// people cannot do.
+[AllowAnonymous]
+[Composable]
+component Pie(
+  string title = "",
+  string subtitle = "",
+  SliceDef[] slices = [],
+  // The drawing is square, so one number is both its width and its height.
+  int size = 220,
+  // The inner radius as a fraction of the outer. 0 is a pie; 0.55 is a donut.
+  //
+  // A donut is not just a decorated pie. Removing the middle removes the part of the wedge where the angle is hardest
+  // to judge and leaves an arc length, which people read better, and it makes room for a total in the middle.
+  double hole = 0.0,
+  // A .NET format string for the values in the legend and the accessible names — `"N0"`, `"P1"`, `"#,##0.00"`.
+  // Empty is the compact default (`1.5K`).
+  string format = "",
+  string prefix = "",
+  string suffix = "",
+  // The text in the middle of a donut. Ignored for a pie, which has no middle to put it in.
+  string centre = "")
+{
+  variants { base { Bg = Colors.ChartSurface; Color = Colors.ChartInk; Rounded = 10; BorderW = 1; Border = Colors.ChartBorder; P = 5; } }
+
+  live var total = SliceTotal(slices);
+
+  render {
+    Stack(gap: 4, role: UiRole.Group, label: title != "" ? title : "Pie chart") {
+      if (title != "" || subtitle != "") {
+        Stack(gap: 1) {
+          if (title != "") { Text(title, fontSize: FontSize.ChartTitle, fontWeight: FontWeight.ChartStrong, color: Colors.ChartInk); }
+          if (subtitle != "") { Text(subtitle, fontSize: FontSize.ChartLabel, color: Colors.ChartMuted); }
+        }
+      }
+
+      if (slices.Length == 0 || total <= 0.0) {
+        Row(h: size, align: Align.Center, justify: Justify.Center) {
+          Text("No data to plot", fontSize: FontSize.ChartLabel, color: Colors.ChartMuted);
+        }
+      } else {
+        Row(gap: 5, align: Align.Center, wrap: Wrapping.Wrap) {
+          Box(w: size, h: size, position: Position.Relative, shrink: 0, role: UiRole.List, label: title != "" ? title : "Slices") {
+            foreach (var i in Enumerable.Range(0, slices.Length)) {
+              // Each slice is its own `Path`, absolutely positioned over the same square, so each carries its own fill
+              // and its own accessible name ("Direct: £42,000 (58%)"), read out per wedge.
+              Path(points: SlicePoints(slices, i, (double)size, hole), closed: true,
+                   fill: SliceColor(slices, i), width: 0,
+                   w: size, h: size, position: Position.Absolute, inset: 0,
+                   role: UiRole.ListItem,
+                   label: $"{slices[i].Label}: {SliceText(slices, i, format, prefix, suffix)} ({SharePct(slices, i)})");
+            }
+            // The donut's middle. A pie has no middle to write in, so this renders only when there is a hole.
+            if (hole > 0.0 && centre != "") {
+              // The centring is on the Stack, not on the Text: a Text is an inline `<span>`, and centring written on it
+              // compiles but has no effect (see the axis title in Chart.osy). `textAlign` matters if the label wraps
+              // onto a second line.
+              Stack(position: Position.Absolute, inset: 0, align: Align.Center, justify: Justify.Center, textAlign: TextAlign.Center) {
+                Text(centre, fontSize: FontSize.ChartTitle, fontWeight: FontWeight.ChartStrong, color: Colors.ChartInk);
+              }
+            }
+          }
+          SliceLegend(slices: slices, format: format, prefix: prefix, suffix: suffix);
+        }
+      }
+    }
+  }
+}
+
+/// The legend of a pie — a swatch, a name, the value AND the share.
+///
+/// The numbers belong here, not on the slices. A label inside a wedge fits only while the wedge is big, so a chart
+/// that labels slices in place drops the labels of exactly the small slices a reader most needs help with. In the
+/// legend every slice gets the same treatment whatever its size.
+[AllowAnonymous]
+[Composable]
+[Part]
+component SliceLegend(SliceDef[] slices, string format, string prefix, string suffix) {
+  render {
+    Stack(gap: 2, role: UiRole.List, label: "Slices") {
+      foreach (var i in Enumerable.Range(0, slices.Length)) {
+        Row(gap: 2, align: Align.Center, role: UiRole.ListItem) {
+          Box(w: 10, h: 10, rounded: 6, bg: SliceColor(slices, i), shrink: 0);
+          Text(slices[i].Label, fontSize: FontSize.ChartTick, color: Colors.ChartInk);
+          Text(SliceText(slices, i, format, prefix, suffix), fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong,
+               color: Colors.ChartInk);
+          Text(SharePct(slices, i), fontSize: FontSize.ChartTick, color: Colors.ChartMuted);
+        }
+      }
+    }
+  }
+}
+
+// ── the geometry ─────────────────────────────────────────────────────────────────────────────────────────
+
+/// Every slice's value added up. A negative slice is meaningless as a share and is clamped to zero rather than
+/// silently making some other slice bigger than the circle.
+double SliceTotal(SliceDef[] slices) { return slices.Where(s => s.Value > 0.0).Sum(s => s.Value); }
+
+/// Where slice `i` starts, as a fraction of the way round.
+double StartFraction(SliceDef[] slices, int i) {
+  var total = SliceTotal(slices);
+  if (total <= 0.0) { return 0.0; }
+  return slices.Take(i).Where(s => s.Value > 0.0).Sum(s => s.Value) / total;
+}
+
+/// How many straight segments approximate an arc of this sweep — about one every three degrees.
+///
+/// Three degrees is indistinguishable from a curve at any size a chart is drawn at, which lets a pie be an ordinary
+/// polygon. A quarter-circle is 30 points; the whole ring of a five-slice donut is under 250.
+int ArcSteps(double sweepRadians) {
+  var degrees = sweepRadians * 57.29577951308232;
+  var n = Convert.ToInt(degrees / 3.0) + 1;
+  if (n < 2) { return 2; }
+  return n > 180 ? 180 : n;
+}
+
+/// One slice as a closed polygon — centre → arc → back for a pie, outer arc → inner arc reversed for a donut.
+///
+/// Angles start at twelve o'clock and run clockwise. Screen y grows downward, so the ordinary `(cos, sin)`
+/// parameterisation already runs clockwise; the start is rotated back by a quarter turn. Getting either wrong produces
+/// a perfectly good pie that begins in the wrong place, which looks deliberate and is easy to miss.
+double[] SlicePoints(SliceDef[] slices, int i, double size, double hole) {
+  var pts = new List<double>();
+  var total = SliceTotal(slices);
+  if (total <= 0.0 || i >= slices.Length || slices[i].Value <= 0.0) { return pts.ToArray(); }
+
+  var tau = 6.283185307179586;
+  var a0 = 0.0 - 1.5707963267948966 + StartFraction(slices, i) * tau;
+  var a1 = a0 + slices[i].Value / total * tau;
+
+  // The outer radius leaves room for an exploded wedge to move without leaving the box.
+  var r = size * 0.44;
+  var cx = size * 0.5;
+  var cy = size * 0.5;
+  if (slices[i].Explode) {
+    // One added vector along the wedge's own bisector: that is all "exploded" means.
+    var mid = (a0 + a1) * 0.5;
+    cx = cx + Math.Cos(mid) * size * 0.05;
+    cy = cy + Math.Sin(mid) * size * 0.05;
+  }
+
+  var steps = ArcSteps(a1 - a0);
+  var k = 0;
+  while (k <= steps) {
+    var a = a0 + (a1 - a0) * (double)k / (double)steps;
+    pts.Add(cx + Math.Cos(a) * r);
+    pts.Add(cy + Math.Sin(a) * r);
+    k = k + 1;
+  }
+
+  if (hole > 0.0) {
+    // The inner arc, walked BACKWARDS. Forwards would cross the wedge and paint a bow tie.
+    var ri = r * (hole > 0.9 ? 0.9 : hole);
+    k = steps;
+    while (k >= 0) {
+      var a = a0 + (a1 - a0) * (double)k / (double)steps;
+      pts.Add(cx + Math.Cos(a) * ri);
+      pts.Add(cy + Math.Sin(a) * ri);
+      k = k - 1;
+    }
+  } else {
+    pts.Add(cx);
+    pts.Add(cy);
+  }
+  return pts.ToArray();
+}
+
+/// This slice's colour — its own, or its position in the fixed palette order.
+///
+/// The same palette the marks use (`PaletteSlot`, scale.osy), so a chart and a pie on one dashboard agree on every
+/// colour.
+string SliceColor(SliceDef[] slices, int i) {
+  if (i >= slices.Length) { return PaletteSlot(i); }
+  return slices[i].Color != null ? slices[i].Color : PaletteSlot(i);
+}
+
+/// A slice's value, as the pie says it.
+string SliceText(SliceDef[] slices, int i, string format, string prefix, string suffix) {
+  if (i >= slices.Length) { return ""; }
+  var body = format == "" ? TickLabel(slices[i].Value) : Convert.ToString(slices[i].Value, format);
+  return prefix + body + suffix;
+}
+
+/// This slice's share of the whole, to the nearest whole percent — the number a reader cannot get off the angles.
+string SharePct(SliceDef[] slices, int i) {
+  var total = SliceTotal(slices);
+  if (total <= 0.0 || i >= slices.Length) { return "0%"; }
+  return Convert.ToString(slices[i].Value / total, "P0");
+}

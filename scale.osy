@@ -1,0 +1,519 @@
+namespace Osysharp.Charts;
+
+// ── the arithmetic ───────────────────────────────────────────────────────────────────────────────────────
+//
+// Plain methods rather than logic inlined in `render`: a scale is a computation, and naming it lets the render block
+// read as a picture. They run client-side, like everything else a component renders.
+
+/// Does this mark draw from a baseline? True for a column or a bar; false for a line, an area, a scatter or a candle.
+///
+/// The switch has no `_` arm on purpose. It names every member explicitly, so a new member fails the build here,
+/// where the decision has to be made, instead of silently answering `false` and drawing nothing.
+bool IsBarKind(Mark m) => m.Kind switch {
+  Column => true,
+  Bar => true,
+  Line => false,
+  Area => false,
+  Scatter => false,
+  // A candle is not a bar. A bar grows from the baseline, which is why a bar chart's axis must start at zero. A
+  // candle's body spans open→close and floats, and its axis must be free to zoom: a price that moves between 118 and
+  // 137 is not usefully drawn on a scale starting at 0. Answering `true` here would flatten every candle chart into a
+  // band at the top of the plot.
+  Candle => false,
+};
+
+/// The COLUMN/BAR series, in order — the ones that share each category slot.
+Mark[] BarMarks(Mark[] marks) { return marks.Where(m => IsBarKind(m)).ToArray(); }
+
+/// A mark's position in a list, by (label, kind).
+///
+/// One walk answers both the palette slot (`SlotOf`) and the sub-slot within the grouped bars (`ColumnIndex`). A mark
+/// is a value with no id, so (label, kind) is its identity; defining that once keeps the two answers consistent.
+int IndexOfMark(Mark[] list, Mark m) {
+  var i = 0;
+  foreach (var x in list) {
+    if (x.Label == m.Label && x.Kind == m.Kind) { return i; }
+    i = i + 1;
+  }
+  return 0;
+}
+
+/// The largest value across every mark — the top of a shared value scale.
+///
+/// One scale for every series, which is a correctness rule rather than a simplification. Two y-scales on one chart
+/// is one of the most misleading things a charting library offers: it lets any two series be made to cross wherever
+/// the author likes. Two measures of different magnitude belong in two charts.
+double MaxOf(Mark[] marks) {
+  var hi = 0.0;
+  foreach (var m in marks) {
+    // A candle's top is its high, not its close: the wick is drawn, so the wick has to fit.
+    //
+    // Nested rather than `m is CandleMark cm && cm.Highs.Length > 0`: a type test that binds has to be the whole
+    // condition of its `if`, so the emptiness guard cannot share the `&&`. The guard is required, because `Max()` on an
+    // empty array throws.
+    if (m is CandleMark cm) {
+      if (cm.Highs.Length > 0) {
+        var h = cm.Highs.Max();
+        if (h > hi) { hi = h; }
+      }
+    }
+    if (m.Values.Length > 0) {
+      var v = m.Values.Max();
+      if (v > hi) { hi = v; }
+    }
+  }
+  return hi;
+}
+
+/// Every series that is currently showing: the legend toggle as a filter, applied once.
+///
+/// The arithmetic takes a mark list, not a list plus a question. Filter first, and every scale function is the
+/// ordinary one over what is left (`MinOf(visible)`, `stacked ? MaxStackedOf(visible) : MaxOf(visible)`), rather
+/// than a hidden-aware twin of each.
+///
+/// For scale and geometry only, never for colour. A mark's palette slot is its position in the full list, so hiding
+/// series 2 does not repaint series 3 to 8. `SlotOf` is always asked of `marks`, never of this.
+Mark[] VisibleMarks(Mark[] marks, string[] hidden) {
+  return marks.Where(m => !IsHidden(hidden, m.Label)).ToArray();
+}
+
+/// The largest stack total: the top of the scale when the bar series are stacked rather than grouped.
+///
+/// The scale must follow the stacking, or a stacked chart lies. Sizing the axis by `MaxOf` (the largest single value)
+/// would leave stacks taller than the scale, so the top segments would run past the last gridline and off the plot,
+/// and a reader checking a segment against the axis would read a number that is not there. The stack total is what
+/// is drawn, so the stack total is what the axis measures.
+///
+/// A line or area on the same chart is not stacked; it keeps its own peak, so it is folded in separately.
+double MaxStackedOf(Mark[] marks) {
+  var n = 0;
+  foreach (var m in marks) { if (m.Values.Length > n) { n = m.Values.Length; } }
+  var hi = 0.0;
+  var i = 0;
+  while (i < n) {
+    var sum = 0.0;
+    foreach (var m in marks) {
+      if (IsBarKind(m) && i < m.Values.Length) { sum = sum + m.Values[i]; }
+    }
+    if (sum > hi) { hi = sum; }
+    i = i + 1;
+  }
+  foreach (var m in marks) {
+    if (!IsBarKind(m) && m.Values.Length > 0) {
+      var v = m.Values.Max();
+      if (v > hi) { hi = v; }
+    }
+  }
+  return hi;
+}
+
+/// The stack TOTAL in one category — what a stacked chart's value label says, and what its accessible name reports.
+double StackTotal(Mark[] marks, int index) {
+  return marks.Where(m => IsBarKind(m) && index < m.Values.Length).Sum(m => m.Values[index]);
+}
+
+/// The numbers a mark contributes to the bottom of the scale. A candle's floor is its low (the wick is drawn, so the
+/// wick has to fit); every other mark contributes its own values.
+///
+/// A named helper rather than a conditional at the call site, because the branch needs the narrowed value
+/// (`cm.Lows`), and a binding type test reads better as a statement than folded into a `?:`. `MaxOf` answers the same
+/// question about highs.
+double[] FloorValuesOf(Mark m) {
+  if (m is CandleMark cm) { return cm.Lows; }
+  return m.Values;
+}
+
+/// The bottom of the scale: zero for anything that grows from a baseline, and the true minimum for a candle.
+///
+/// A bar chart's baseline is always zero. Starting the axis at the data's minimum exaggerates small differences and
+/// is the best-known way to lie with a chart, so this floor is not derived from the data.
+///
+/// It is zero for a line too, unless the data goes below zero. A line chart may legitimately zoom (a stock price, a
+/// temperature), but that is the author's call and it has a spelling: `Axis(min:)`. Deriving a zoom from "every mark
+/// happens to be a line" would zoom charts nobody asked to zoom.
+///
+/// A candle is the exception. A price between 118 and 137 drawn from zero is a band in the top eighth of the plot
+/// with every session indistinguishable. Readers of price charts expect a zoomed axis, and the candle's body carries
+/// the "how big" information a bar's height carries. So the floor lifts when candles are present, and it is the
+/// lowest low.
+double MinOf(Mark[] marks) {
+  if (marks.OfType<CandleMark>().Any()) {
+    var lo = 0.0;
+    var first = true;
+    foreach (var m in marks) {
+      // The candle's LOW is its bottom; a moving-average line on the same chart contributes its own values.
+      foreach (var v in FloorValuesOf(m)) {
+        if (first || v < lo) { lo = v; first = false; }
+      }
+    }
+    return lo;
+  }
+  // ⭐ THE SAME RULE FOR EVERY NON-CANDLE MARK: the lowest value when it is below zero, and zero otherwise.
+  //
+  // It used to answer a flat `0.0` as soon as a bar or an area was present, and that is what drew a NEGATIVE value as
+  // a zero-height bar — silently, on a chart that otherwise looked right (ledger #chart-negative-bars). The rule this
+  // replaces it with keeps the property the old one was protecting: a floor of `min(0, …)` can only ever EXTEND the
+  // axis downward, never lift it above zero, so a bar is still read by its full length from zero and the chart still
+  // cannot exaggerate a small difference by cropping the baseline.
+  var lo2 = 0.0;
+  foreach (var m in marks) {
+    foreach (var v in m.Values) {
+      if (v < lo2) { lo2 = v; }
+    }
+  }
+  return lo2;
+}
+
+/// Where the ZERO LINE sits, as a percentage up the plot from the bottom.
+///
+/// 0 whenever nothing is negative, which is what makes this change invisible to every chart that has no negative
+/// value: the region below the line is then zero-tall and the marks lay out exactly as they did.
+double ZeroPct(double lo, double top) {
+  var p = PercentOf(0.0, lo, top);
+  return p > 100.0 ? 100.0 : p;
+}
+
+/// A bar's LENGTH as a percentage of the plot — its distance from the zero line, whichever side of it the value is.
+///
+/// `PercentOf` measures from the floor, so on a chart with a negative floor it answers where the value SITS rather
+/// than how long the bar is. A bar is drawn from zero, so its length is the gap between the two.
+double BarPct(double v, double lo, double top) {
+  var d = PercentOf(v, lo, top) - ZeroPct(lo, top);
+  return d < 0.0 ? 0.0 - d : d;
+}
+
+/// A length that is a percentage OF THE PLOT, restated as a percentage of the REGION it is drawn in.
+///
+/// The slot is split at the zero line into two regions, so a bar inside one is sized against that region's height
+/// rather than the plot's. Without this every negative bar would be drawn at its plot-percentage inside a region that
+/// is only a fraction of the plot, and would come out short by exactly that fraction.
+double SlicePct(double barPct, double regionPct) {
+  if (regionPct <= 0.0) { return 0.0; }
+  var p = barPct / regionPct * 100.0;
+  return p > 100.0 ? 100.0 : p;
+}
+
+/// The positive part of one category's stack, and the negative part — the two halves a mixed-sign stack splits into.
+///
+/// A stack with values on both sides of zero is two stacks sharing a baseline: the positives grow up from the zero
+/// line and the negatives down from it. Sizing it by the NET (which is what `StackTotal` answers, and what the value
+/// label and the axis measure) would draw one short bar and hide both halves.
+double StackPositive(Mark[] marks, int index) {
+  return marks.Where(m => IsBarKind(m) && index < m.Values.Length && m.Values[index] > 0.0)
+              .Sum(m => m.Values[index]);
+}
+
+double StackNegative(Mark[] marks, int index) {
+  return marks.Where(m => IsBarKind(m) && index < m.Values.Length && m.Values[index] < 0.0)
+              .Sum(m => m.Values[index]);
+}
+
+/// The bottom of the scale, with the author's `Min` when they declared one.
+///
+/// A declared floor is honoured for lines, scatters and candles, where zooming in is honest. With a column, bar or area
+/// on the chart it can extend the axis below zero but never lift it above zero: those marks are read by their length
+/// from zero, so cutting that length off changes what they say.
+double FloorOf(Mark[] marks, double? min) {
+  if (min == null) { return MinOf(marks); }
+  var declared = (double)min;
+  if (marks.OfType<CandleMark>().Any()) { return declared; }
+  if (marks.Any(m => IsBarKind(m) || m.Kind == MarkKind.Area)) { return declared < 0.0 ? declared : 0.0; }
+  return declared;
+}
+
+/// A tick step that lands on a round number: 1, 2, 2.5 or 5 times a power of ten.
+///
+/// This is why the axis reads `0 / 500 / 1,000 / 1,500` instead of `0 / 437 / 874`.
+double NiceStep(double range, int target) {
+  if (range <= 0.0 || target <= 0) { return 1.0; }
+  var raw = range / target;
+  var magnitude = Math.Pow(10.0, Math.Floor(Math.Log10(raw)));
+  var normalized = raw / magnitude;
+  if (normalized <= 1.0) { return magnitude; }
+  if (normalized <= 2.0) { return 2.0 * magnitude; }
+  // 2.5 is in the set because 1/2/5 alone jumps from 20 to 50 — a 0-89 range then steps by 50 and paints three
+  // gridlines where four were asked for. `25` is as round a number as `20` to every reader.
+  if (normalized <= 2.5) { return 2.5 * magnitude; }
+  if (normalized <= 5.0) { return 5.0 * magnitude; }
+  return 10.0 * magnitude;
+}
+
+/// The tick VALUES, from the top down — the order they are painted in.
+double[] TicksOf(double lo, double hi, int target) {
+  var step = NiceStep(hi - lo, target);
+  var top = Math.Ceiling(hi / step) * step;
+  var ticks = new List<double>();
+  var v = top;
+  while (v >= lo - step * 0.5 && ticks.Count < 24) {
+    ticks.Add(v);
+    v = v - step;
+  }
+  return ticks.ToArray();
+}
+
+/// The top of the painted scale — the highest tick, so the tallest bar meets a gridline instead of floating.
+double ScaleTop(double lo, double hi, int target) {
+  var ticks = TicksOf(lo, hi, target);
+  return ticks.Length > 0 ? ticks[0] : (hi > 0.0 ? hi : 1.0);
+}
+
+/// A tick label: thousands-separated, and compacted past four digits so an axis never wears `1,500,000`.
+string TickLabel(double v) {
+  var a = Math.Abs(v);
+  return a switch {
+    >= 1000000.0 => Convert.ToString(Math.Round(v / 1000000.0, 1)) + "M",
+    >= 1000.0 => Convert.ToString(Math.Round(v / 1000.0, 1)) + "K",
+    _ => Convert.ToString(Math.Round(v, 2)),
+  };
+}
+
+/// A value as this axis says it: the one formatter every number on the chart goes through.
+///
+/// The tick labels, the hover readout, the on-mark values and every mark's accessible name all call this, so a chart
+/// whose axis reads `1.2K` and whose tooltip reads `1234.0` cannot happen. Formatting done separately at each render
+/// site drifts silently, and the axis is what people check while the tooltip is what they act on.
+///
+/// An empty `Format` is the compact default (`1.5K`), which no .NET specifier produces; anything else is handed to
+/// the formatter exactly as C# would hand it over.
+string Formatted(double v, AxisDef axis) {
+  // ⭐ THE SIGN GOES OUTSIDE THE PREFIX (ledger #chart-negative-prefix). Composed as `Prefix + body`, a negative on a
+  //   currency axis read `£-8,000`, where C# — and every finance UI a reader has seen — writes `-£8,000`. It is one
+  //   formatter, so the wrong spelling reached the ticks, the hover readout, the data table, the on-mark values and
+  //   every mark's accessible name at once; fixing it here fixes all of them, which is why they share it.
+  //
+  //   The MAGNITUDE is formatted and the sign put back in front, rather than string-patching the result: a format
+  //   specifier may place the sign anywhere (or in brackets), and rewriting its output would be guessing at it.
+  var magnitude = v < 0.0 ? 0.0 - v : v;
+  var body = axis.Format == "" ? TickLabel(magnitude) : Convert.ToString(magnitude, axis.Format);
+  // ⚠ Decided on the FORMATTED text, not on `v`: a value that rounds away to zero at this axis's precision — −0.4
+  //   under `N0` — must read `£0`, never `-£0`, which is a number nobody writes and which would appear only on the
+  //   one tick a reader checks against the zero line. `TickLabel` rounds too (2 decimals, or 1 in K/M), so the same
+  //   guard covers both branches.
+  var zero = axis.Format == "" ? TickLabel(0.0) : Convert.ToString(0.0, axis.Format);
+  var negative = v < 0.0 && body != zero;
+  return (negative ? "-" : "") + axis.Prefix + body + axis.Suffix;
+}
+
+/// Is this chart horizontal? True as soon as any mark is a `Bar`.
+///
+/// Orientation is a property of the marks, not a flag on the chart. A `Bar` and a `Column` describe the same numbers
+/// along perpendicular axes, so a chart holding both has no single coordinate system to draw them in. Deriving it
+/// from the marks leaves no separate flag to contradict them, and costs the author nothing: they wrote `Bar` because
+/// they wanted bars.
+bool IsHorizontal(Mark[] marks) { return marks.Any(m => m.Kind == MarkKind.Bar); }
+
+/// The value axis in force: the one the author declared, or a default when they declared none.
+///
+/// The value axis is the one on the value side, and which side that is depends on the orientation. A column chart
+/// measures up the left and names categories along the bottom; a bar chart measures along the bottom and names
+/// categories down the left. So `Axis(side: Bottom, format: "N0")` configures the numbers on a bar chart and the
+/// category strip on a column chart, which matches where each axis is on screen.
+///
+/// Returning a default rather than null lets every caller read `axis.Format` without asking whether there is an axis
+/// at all: a chart with no `Axis(…)` child formats exactly as one with the default.
+AxisDef ValueAxisOf(AxisDef[] axes, bool horizontal) {
+  var want = horizontal ? AxisSide.Bottom : AxisSide.Left;
+  foreach (var a in axes) { if (a.Side == want) { return a; } }
+  return new AxisDef();
+}
+
+/// The tick VALUES in READING order along a horizontal axis — lowest at the left.
+///
+/// `TicksOf` returns them top-down, which is the paint order for a vertical axis and backwards for a horizontal one.
+double[] Ascending(double[] ticks) { return ticks.Reverse().ToArray(); }
+
+/// The tick VALUES when the author pinned the top of the scale — evenly spaced from `top` down to `lo`.
+///
+/// A pinned `Max` means "the axis ends HERE", so the round-number search that `TicksOf` does is the wrong answer:
+/// it would round past the number the author chose. Even division keeps the promise instead.
+double[] TicksBetween(double lo, double top, int count) {
+  var ticks = new List<double>();
+  var n = count < 1 ? 1 : (count > 20 ? 20 : count);
+  var step = (top - lo) / (double)n;
+  var i = 0;
+  while (i <= n) {
+    ticks.Add(top - step * (double)i);
+    i = i + 1;
+  }
+  return ticks.ToArray();
+}
+
+/// The palette, and the only place it is written down.
+///
+/// Never cycled. Past eight series the answer is not a ninth hue (hues stop being distinguishable long before the
+/// slots run out), so the tail shares the last slot and the chart is telling you to group or facet. That is what the
+/// `_` arm says, and here a `_` is the right answer rather than a missing case: the domain is every int, and "past
+/// the end" is a single, real answer.
+///
+/// Both the chart marks and the pie use it, so they cannot disagree about a colour. A colour override is the caller's
+/// business (a mark has one, a slice has one, and they are read at the call site), so this takes the slot and nothing
+/// else.
+string PaletteSlot(int slot) => slot switch {
+  0 => "var(--colors-series1)",
+  1 => "var(--colors-series2)",
+  2 => "var(--colors-series3)",
+  3 => "var(--colors-series4)",
+  4 => "var(--colors-series5)",
+  5 => "var(--colors-series6)",
+  6 => "var(--colors-series7)",
+  _ => "var(--colors-series8)",
+};
+
+/// Show every Nth label: the smallest N that lets the widest label fit its share of the axis, and 1 when they all do.
+///
+/// This is what a "time axis" means here. Sixty daily closes do not want their x positions spread proportionally in
+/// wall-clock time: price charts use a session axis precisely so that weekends do not open gaps in the series. What
+/// sixty categories want is sixty slots and about eight labels. So the problem is label selection, not a scale, and
+/// it is the same for any long category list.
+///
+/// `+ 6` is the gutter between neighbouring labels: two labels that touch are less readable than one that is missing.
+int LabelStep(double widest, double slot) {
+  if (slot <= 0.0) { return 1; }
+  var needed = (int)Math.Ceiling((widest + 6.0) / slot);
+  return needed < 1 ? 1 : (needed > 64 ? 64 : needed);
+}
+
+/// What a screen reader is told about one mark: "Revenue: £82,400".
+///
+/// One definition for every drawn mark (`Columns`, `Bars`, `Dots` and the stacked pair). The two orientations of each
+/// pair differ in every layout property, but the accessible name must not differ between them, and a difference here
+/// would be invisible to everyone who can see the chart.
+string MarkLabel(Mark m, double v, AxisDef axis) { return $"{m.Label}: {Formatted(v, axis)}"; }
+
+/// This mark's colour: its own override, or its slot in the fixed palette order.
+string ColorOf(Mark m, int slot) { return m.Color != null ? m.Color : PaletteSlot(slot); }
+
+/// The x,y point list for a line/area/scatter mark, in the plot's own coordinate space.
+///
+/// Flat and x,y-interleaved, which is the shape `Path` takes. A single point is centred rather than pinned left, so a
+/// one-value series is not a dot in a corner.
+double[] PointsOf(double[] values, double lo, double top, double w, double h) {
+  var pts = new List<double>();
+  var n = values.Length;
+  if (n == 0 || top <= lo) { return pts.ToArray(); }
+  var i = 0;
+  foreach (var v in values) {
+    // The CENTRE of this value's slot — the same place the category label and the column sit. Spreading points
+    // 0…w instead puts the first point on the left edge, half a slot away from the label naming it.
+    var x = (i + 0.5) * w / n;
+    var y = h - (v - lo) / (top - lo) * h;
+    pts.Add(x);
+    pts.Add(y);
+    i = i + 1;
+  }
+  return pts.ToArray();
+}
+
+/// The same points, closed down to the baseline — an area's outline.
+double[] AreaPointsOf(double[] values, double lo, double top, double w, double h) {
+  var pts = PointsOf(values, lo, top, w, h);
+  if (pts.Length == 0) { return pts; }
+  var closed = new List<double>();
+  foreach (var p in pts) { closed.Add(p); }
+  closed.Add(pts[pts.Length - 2]);   // straight down from the last point…
+  closed.Add(h);
+  closed.Add(pts[0]);                // …along the baseline, back under the first
+  closed.Add(h);
+  return closed.ToArray();
+}
+
+/// The NOMINAL horizontal coordinate space every path is drawn in. Arbitrary — the viewBox scales it to whatever
+/// box the element is given — but a round 1000 keeps the emitted `d` readable when you inspect it.
+double PlotSpace() { return 1000.0; }
+
+/// This value's height as a percentage of the plot — how a column is sized without any coordinate arithmetic.
+double PercentOf(double v, double lo, double top) {
+  if (top <= lo) { return 0.0; }
+  var p = (v - lo) / (top - lo) * 100.0;
+  return p < 0.0 ? 0.0 : p;
+}
+
+// ── annotations ──────────────────────────────────────────────────────────────────────────────────────────
+
+/// The annotations of one kind, in the order written.
+///
+/// A filter rather than three lists on `ChartCtx`: the author writes them interleaved and the ORDER within a kind is
+/// the paint order, so one list preserves what they wrote and each layer takes the slice it draws.
+Annotation[] OfKind(Annotation[] all, AnnotationKind kind) { return all.Where(a => a.Kind == kind).ToArray(); }
+
+/// A band's LOWER edge, whichever way round the author wrote it. `Band(from: 65000, to: 55000)` is the same band as
+/// its reverse, and refusing one of the two spellings would be pedantry over a shape that has no ambiguity.
+double BandLo(Annotation a) { return a.From < a.To ? a.From : a.To; }
+double BandHi(Annotation a) { return a.From < a.To ? a.To : a.From; }
+
+/// Where a category is, by name: its index, or -1 when this chart has no such category.
+///
+/// -1 is a real answer, and it is not dropped silently. Categories are runtime data, so a `Note` naming one that is
+/// not there cannot be a compile error, but a note that simply vanished would leave the author looking at a chart
+/// that renders perfectly and is missing what they asked for. `AnnotationMarks` says so on the chart.
+int CategoryIndex(string[] labels, string category) {
+  var i = 0;
+  foreach (var l in labels) {
+    if (l == category) { return i; }
+    i = i + 1;
+  }
+  return -1;
+}
+
+/// An annotation's position on the value axis, clamped to the plot.
+///
+/// Clamped rather than expanding the scale: a target of 500k on a chart topping out at 73k must not squash every real
+/// bar into the bottom eighth to make room for a line. So the line pins to the edge, and `AnnotationLabel` says
+/// "above the top of this chart" in its accessible name, so the reader can tell "the target is met exactly at the
+/// ceiling" from "the target is off the scale".
+double AnnotationPct(double v, double lo, double top) {
+  var p = PercentOf(v, lo, top);
+  return p < 0.0 ? 0.0 : (p > 100.0 ? 100.0 : p);
+}
+
+/// True when a value falls outside the painted scale, so the drawing is a clamp rather than a position.
+bool OffScale(double v, double lo, double top) { return v < lo || v > top; }
+
+/// What a screen reader is told about one annotation: "Target: £60,000", or "Target: £500,000 (above the top of
+/// this chart)" when it had to be clamped.
+///
+/// One definition for the same reason `MarkLabel` is one: the three kinds and two orientations are six drawing
+/// sites, and this is the one thing among them that must not differ.
+string AnnotationLabel(string label, double v, double lo, double top, AxisDef axis) {
+  var named = label != "" ? $"{label}: {Formatted(v, axis)}" : Formatted(v, axis);
+  if (v > top) { return $"{named} (above the top of this chart)"; }
+  if (v < lo) { return $"{named} (below the bottom of this chart)"; }
+  return named;
+}
+
+/// What a screen reader is told about a band: "Target range: £55,000 to £65,000".
+///
+/// Its own function rather than two `AnnotationLabel` calls joined at the call site, because a band is one thing with
+/// two edges.
+string BandLabel(Annotation a, double lo, double top, AxisDef axis) {
+  var span = $"{Formatted(BandLo(a), axis)} to {Formatted(BandHi(a), axis)}";
+  var named = a.Label != "" ? $"{a.Label}: {span}" : span;
+  return OffScale(BandLo(a), lo, top) || OffScale(BandHi(a), lo, top)
+       ? $"{named} (clipped to the range of this chart)" : named;
+}
+
+/// Does this chart have any annotation of this kind?
+///
+/// The annotation layers are guarded on this, and not as an optimisation. An annotation layer carries
+/// `role: UiRole.List, label: "Annotations"`, so emitting it unconditionally would announce an empty list named
+/// "Annotations" to screen readers on every chart, annotated or not.
+bool HasKind(Annotation[] all, AnnotationKind kind) { return all.Any(a => a.Kind == kind); }
+
+/// The widest of these labels, as painted.
+///
+/// A measuring fold is ordinary LINQ. A render block emits elements and cannot accumulate a value, so the fold lives
+/// in a plain helper as `Max(l => …)` over the list, exactly as C# would write it.
+///
+/// It can only be called while rendering, and that is inferred, not declared. `Layout.TextWidth` measures against
+/// the font a rendered container paints with, so the restriction propagates from the call below: calling this from
+/// an action or a server function is a compile error naming this function.
+///
+/// The fallback is per label: the server has no font, so every measurement is null there and the estimate is what
+/// the first paint uses; the client then measures for real.
+///
+/// The fold also needs its own answer for an empty list. `Max` over no labels is null (`Min`/`Max`/`Average` have no
+/// zero identity, unlike `Sum` and `Count`), and the widest of no labels is 0, which is also the correct layout:
+/// nothing to make room for.
+double WidestLabel(string[] labels) {
+  return labels.Max(l => Layout.TextWidth(l) ?? (double)l.Length * 7.0) ?? 0.0;
+}

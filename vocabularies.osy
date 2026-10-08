@@ -1,0 +1,372 @@
+namespace Osysharp.Charts;
+
+// ── the shapes an author fills ───────────────────────────────────────────────────────────────────────────
+
+/// What a mark draws as. A closed vocabulary, like `AxisSide` and `LegendPos` beside it.
+///
+/// An enum rather than a string, so the compiler checks decisions about a mark's kind. `IsBarKind` switches on it
+/// with no `_` arm, so a new member fails the build there, at the site that has to decide about it, instead of
+/// silently drawing nothing.
+///
+/// `Candle` is the one member nothing compares against, and that is deliberate. Candle-specific data lives on
+/// `CandleMark` and is selected by type, so this member's job is to keep a candle from matching any of the five
+/// style passes. Without it a `CandleMark` would keep the inherited `Line` default and the line pass would draw a
+/// curve through the closes.
+public enum MarkKind { Line, Area, Column, Bar, Scatter, Candle }
+
+/// One plotted series. Heterogeneous by design: a chart mixes a column series with a line, so a chart holds a
+/// `Mark[]` and each element is whatever it needs to be.
+///
+/// Two questions, two mechanisms. `Kind` answers "how does this draw": a closed vocabulary of styles, because a
+/// `Column` and a `Bar` hold identical data and differ only in which way the chart is turned. A subtype answers
+/// "what data does this carry", and exactly one mark needs one: `CandleMark` below. Modelling the styles as subtypes
+/// would be five near-empty classes replacing an exhaustively checked enum; putting the candle's extra arrays on
+/// `Mark` would give every line series three arrays it can never use.
+public class Mark {
+  /// What this series draws as — set by the config record you wrote, not by hand.
+  public MarkKind Kind = MarkKind.Line;
+  /// What the legend and the accessible name call this series. Required: a series nobody can name is a colour.
+  public string Label;
+  /// The values, one per category, in the same order as the chart's `labels`. For a CANDLE this is the CLOSE — see
+  /// `CandleMark`.
+  public double[] Values;
+  /// Override the palette slot. Null takes this mark's position in the fixed order.
+  ///
+  /// Set it explicitly when the series set changes at runtime (a filter, a picker). Colour should follow the entity,
+  /// not its rank: with slots assigned by position, removing series 2 repaints series 3 to 8, and a reader who had
+  /// learned "orange is EMEA" is now reading a different chart.
+  public string? Color;
+}
+
+/// Open-high-low-close sessions: the one mark whose data shape differs, and therefore the one that is a subtype.
+///
+/// Four numbers per category and one object rather than four series: the body spans open→close and the wick spans
+/// low→high, so it cannot be assembled from four independent `Line`s.
+///
+/// `Values` (inherited) is the close, which is semantically right: the value of a trading day is its close. So the
+/// scale, the hover readout, the legend, the accessible name and a moving-average `Line` drawn over the sessions all
+/// work with no knowledge of candles. Only the places that need a high or a low ask for one, and they ask by type:
+/// `marks.OfType<CandleMark>()`.
+///
+/// Three parallel arrays rather than an array of four-field records, because of the call site:
+/// `Candle(opens: o, highs: h, lows: l, values: c)` is columnar, like `values: revenue` everywhere else, whereas a
+/// record array would make every author write a per-session projection over four arrays they already hold.
+///
+/// Its `Kind` is always `MarkKind.Candle`, set by the `Candle(…)` record, which is the only thing that builds one.
+/// The candle pass selects by type, so that member's job is to make a candle match none of the five style passes.
+///
+/// A consequence for anyone extending this kit: because this subtype exists, a `Mark[]` is not writable. A `Mark[]`
+/// may really be a widened `CandleMark[]`, so `marks[i] = …` is a compile error naming this class (C# permits the
+/// write and throws at run time; Osy# refuses it at compile time). Nothing in the kit writes through one. If you
+/// need a writable sequence of marks, use a `List<Mark>`, which is invariant and therefore safe.
+public class CandleMark : Mark {
+  public double[] Opens;
+  public double[] Highs;
+  public double[] Lows;
+}
+
+/// Which edge an axis sits on. A closed vocabulary rather than a string, so `Axis(side: Left)` is checked and
+/// completable — the same discipline `align: Align.Center` follows.
+public enum AxisSide { Left, Bottom }
+
+// ── annotations ──────────────────────────────────────────────────────────────────────────────────────────
+
+/// What an annotation draws as. A closed vocabulary, like `MarkKind`.
+public enum AnnotationKind { Rule, Band, Note }
+
+/// Something true about the chart that is not in the data: a target, an acceptable range, the day of a release.
+///
+/// An annotation is not a series. It has no palette slot, is absent from the legend, does not affect the scale and
+/// cannot be toggled off, because none of those things is true of "the target is 60k". Modelling a target as a
+/// one-value `Line` is the usual shortcut, and it costs exactly those four properties: the legend grows an entry
+/// nobody clicks, the palette shifts under the real series, and the axis stretches to reach a number that was never
+/// measured.
+///
+/// An annotation does not move the scale. A target of 500k on a chart topping out at 73k would otherwise squash
+/// every real bar into the bottom eighth to make room for a line. Out-of-range annotations are clamped to the plot
+/// edge and say so in their accessible name ("target 500,000 (above the top of this chart)"), and a clamped rule
+/// also shows an arrow beside its label, so it does not look as if the target had been met.
+///
+/// One shape tagged with `Kind`, not the subtype treatment `Mark`/`CandleMark` got. A kind earns a type when it
+/// carries data the others cannot: a candle has four numbers per category where every other mark has one. `Rule`,
+/// `Band` and `Note` differ only in which of three small scalars they read, and the author never writes `Annotation`
+/// directly (only the three records), so three near-empty classes would buy nothing.
+public class Annotation {
+  /// Which of the three this is — set by the config record you wrote, not by hand.
+  public AnnotationKind Kind = AnnotationKind.Rule;
+  /// What it is called, on the chart and in its accessible name. Empty draws the geometry unlabelled.
+  public string Label = "";
+  /// Override the annotation ink. Null takes the kit's annotation colour, which is deliberately NOT a palette slot:
+  /// an annotation that borrows series 3's hue reads as series 3.
+  public string? Color;
+
+  /// `Rule` and `Note`: the value it sits at, on the value axis.
+  public double Value;
+  /// `Band`: the two edges. A band drawn from the larger to the smaller is the same band — they are sorted.
+  public double From;
+  public double To;
+  /// `Note`: which category it sits on, by NAME rather than by index.
+  ///
+  /// By name because categories are runtime data: insert a month at the front and every index-addressed note would
+  /// silently point one slot to the left. A name that no longer exists is a mismatch the chart can report, and does
+  /// (see `AnnotationMarks` in Plot.osy).
+  public string Category = "";
+}
+
+/// Where the legend sits, or that there is none.
+///
+/// `None` is a position, not a separate `show` flag: a boolean and a position would be two ways to say "no legend"
+/// that could silently disagree.
+public enum LegendPos { Top, Bottom, Left, Right, None }
+
+/// The legend.
+public class LegendDef {
+  /// Which edge it sits on. `Bottom` is the default and is right for most charts: a legend above the plot separates
+  /// the title from the picture it names.
+  public LegendPos Position = LegendPos.Bottom;
+
+  /// CLICK A SERIES TO HIDE IT, and click again to bring it back.
+  ///
+  /// Off by default, because an affordance that looks live must be live. A legend that responds to a click is a
+  /// control, and on a chart printed into a report it promises something the reader cannot use. Turn it on where the
+  /// chart is something people work with.
+  ///
+  /// The scale follows. Hiding the tallest series rescales the axis, which is what makes toggling useful: the remaining
+  /// series expand to fill the plot instead of huddling at the bottom of a scale set by something no longer on screen.
+  /// Colours do not follow: a series keeps its palette slot whether or not it is showing, so hiding series 2 does not
+  /// repaint series 3 to 8 under a reader who had learned what orange meant.
+  public bool Interactive = false;
+}
+
+/// One AXIS. A chart declares the axes it wants; none is a legitimate answer for a sparkline.
+public class AxisDef {
+  /// `Left` (the value axis) | `Bottom` (the category axis).
+  ///
+  /// You rarely declare `Bottom`: giving the chart `labels` is the request for a category axis. Declaring it is
+  /// harmless.
+  public AxisSide Side = AxisSide.Left;
+  /// Draw this axis's gridlines. On by default for the value axis, which is where they earn their keep.
+  public bool Grid = true;
+  /// How many value ticks to aim for. The real count is chosen to land on ROUND numbers, so it may differ by one.
+  public int Ticks = 4;
+
+  /// What this axis MEASURES — "Revenue", "Users", "°C". Empty draws none.
+  ///
+  /// Rendered horizontally above the ticks rather than rotated up the side. A rotated title is the older convention
+  /// and it is the harder one to read; putting it where a column heading would go costs no rotation and no width.
+  public string Title = "";
+
+  /// How every value on this axis is rendered — a .NET format string, spelled the way C# spells it: `"N0"`, `"P1"`,
+  /// `"#,##0.00"`. Governs the tick labels, the hover readout, the on-mark values and every mark's accessible name at
+  /// once, so a chart whose axis says `1.2K` and whose tooltip says `1234.0` is not expressible.
+  ///
+  /// Empty is the COMPACT default — `1.5K`, `2.4M`, `42` — which is what an axis usually wants and which no .NET
+  /// specifier produces.
+  public string Format = "";
+
+  /// Wrapped around every formatted value — `Prefix = "£"`, `Suffix = " ms"`.
+  ///
+  /// Currency is usually better as a PREFIX than as the `C` specifier: `C` under the invariant culture renders the
+  /// generic `¤` sign, because the invariant culture has no country. `Prefix = "£"` with `Format = "N0"` is what you
+  /// meant. (`C` itself works, and formats in the browser like every other specifier.)
+  public string Prefix = "";
+  public string Suffix = "";
+
+  /// An EXPLICIT domain. Null takes the value from the data — the default, and right nearly always.
+  ///
+  /// `Min` does not let a bar chart lie. With a column, bar or area on the chart the baseline stays at zero: a `Min`
+  /// above zero is not applied, because starting the axis at the data's minimum exaggerates small differences and is
+  /// the best-known way to mislead with a chart. A `Min` below zero still extends the axis downward. For a line,
+  /// scatter or candle chart (a stock price, a temperature) `Min` moves the axis, where zooming is honest.
+  public double? Min;
+  /// The top of the scale, exactly. Null rounds up to the next round tick so the tallest mark meets a gridline.
+  public double? Max;
+}
+
+// ── the config records — what a call site writes ─────────────────────────────────────────────────────────
+//
+// Bodyless components whose base type names the shape they contribute. They are written as children of `Chart`,
+// which reads as the picture being described rather than as an array literal being assembled:
+//
+//     Chart(title: "Revenue", labels: months) {
+//       Column(label: "2024", values: last);
+//       Line(label: "2025", values: current);
+//       Axis(side: Left);
+//     }
+
+/// A connected line through the values. The default mark: it is what a time series is.
+[AllowAnonymous] component Line(string label, double[] values, string? color = null, MarkKind kind = MarkKind.Line) : Mark;
+
+/// A line with the space beneath it washed in the series hue. Use for ONE series, or for a total — overlapping
+/// washes muddy into a colour that is neither series.
+[AllowAnonymous] component Area(string label, double[] values, string? color = null, MarkKind kind = MarkKind.Area) : Mark;
+
+/// Vertical bars from a single baseline — magnitude by category, the most-read chart there is.
+[AllowAnonymous] component Column(string label, double[] values, string? color = null, MarkKind kind = MarkKind.Column) : Mark;
+
+/// HORIZONTAL bars — the transpose of `Column`, and the right form whenever the category NAMES are long or there
+/// are many of them: "Enterprise renewals" fits beside a bar and does not fit under a column, and twenty rows scroll
+/// where twenty columns crush.
+///
+/// A `Bar` turns the whole chart; it is not a mark you mix in. The value axis moves to the bottom, the categories
+/// run down the left and the gridlines stand vertical, so a `Bar` and a `Column` in one chart would need two
+/// coordinate systems at once. The kit treats the chart as horizontal as soon as any mark is a `Bar`.
+///
+/// The axis follows the orientation: in a horizontal chart `Axis(side: Bottom)` is the VALUE axis (format, min/max,
+/// ticks, title) and `Axis(side: Left)` names the categories — exactly the other way round from a column chart, and
+/// exactly where each one is on the screen.
+[AllowAnonymous] component Bar(string label, double[] values, string? color = null, MarkKind kind = MarkKind.Bar) : Mark;
+
+/// Points without a connecting line. For a series whose x-positions are samples rather than a sequence.
+[AllowAnonymous] component Scatter(string label, double[] values, string? color = null, MarkKind kind = MarkKind.Scatter) : Mark;
+
+/// OPEN-HIGH-LOW-CLOSE candles — one object per session, not four series.
+///
+/// `values` is the CLOSE; `opens`, `highs` and `lows` are the other three, one per category, in the same order.
+/// A `Line` on the same chart is the way to draw a moving average over them, and it needs nothing special: the
+/// candle series' `values` are its closes, so both are on one scale and in one legend.
+///
+/// The axis is a session axis, not a clock. Give it `labels` of trading days rather than a proportional time scale:
+/// that is what stops weekends opening gaps in the series, and it is what price charts conventionally do. The
+/// category axis draws as many labels as fit, measured against the rendered width, so sixty sessions is fine.
+///
+/// Direction is both colour and shape. An up session is hollow and green, a down session filled and red, because
+/// colour alone is not a channel for a reader with a colour-vision deficiency, on a greyscale print, or under
+/// `forced-colors`. `color` overrides the outline for a chart that wants one hue.
+[AllowAnonymous] component Candle(string label, double[] values, double[] opens, double[] highs, double[] lows,
+                                  string? color = null, MarkKind kind = MarkKind.Candle) : CandleMark;
+
+/// How much chart surrounds the marks.
+///
+/// `Bare` is the sparkline, and it is a mode rather than a second component. A sparkline is the same picture with
+/// everything that is not a mark taken away: no card, no axes, no gridlines, no legend, no visible title and no hover
+/// readout. A separate `Sparkline` component would be a second path through the same marks, and the two would drift.
+///
+/// A title is not dropped, it moves. `Chart(title: "Sales", chrome: Bare)` draws no heading and makes "Sales" the
+/// chart's accessible name, so a sparkline still announces what it is.
+///
+/// An enum rather than `bare: true` because the card chrome is a `variants` dimension, and a variants dimension is
+/// keyed by an enum-typed parameter.
+public enum ChartChrome { Card, Bare }
+
+/// Where the data TABLE goes, if the chart has one.
+///
+/// `Instead` is a first-class choice, not a fallback for a broken chart. Plenty of data is really a table: a few
+/// numbers that do not trend, a set of unrelated magnitudes, anything a reader will want to copy out.
+public enum TablePos { Below, Instead }
+
+/// The same data as rows.
+///
+/// It is also the accessibility answer, and a better one than more `aria-label`s. Every mark already names itself
+/// ("Revenue: £42,000"), which is right when a reader is on that mark and useless for the questions they actually
+/// have: "which month was highest?", "what were the other five?". Those are answered by structure:
+/// `UiRole.Grid` / `UiRole.GridRow` / `UiRole.ColumnHeader` / `UiRole.GridCell` let a screen reader read by position
+/// and announce a cell with its column header, and let a sighted reader select and copy. The table reuses the marks'
+/// own formatting (`Formatted`, the series' `Label`), so it cannot disagree with the picture.
+public class TableDef {
+  /// `Below` the chart (the default), or `Instead` of it.
+  public TablePos Position = TablePos.Below;
+}
+
+/// The data table — `Table()`, or `Table(position: TablePos.Instead)`.
+///
+/// Written as a child of `Chart`, like an axis or a legend. It follows the LEGEND: a series switched off leaves the
+/// table too, because the table is the same data, and a table disagreeing with the picture beside it is worse than
+/// no table.
+[AllowAnonymous] component Table(TablePos position = TablePos.Below) : TableDef;
+
+/// The legend — `Legend(position: LegendPos.Right)`, `Legend(interactive: true)`, `Legend(position: LegendPos.None)`.
+///
+/// Written as a child of `Chart`, like an axis. A chart with no `Legend(…)` child gets the default: at the bottom,
+/// not interactive, and only when there are two or more series (one series needs none — the title already names it).
+[AllowAnonymous] component Legend(LegendPos position = LegendPos.Bottom, bool interactive = false) : LegendDef;
+
+/// A REFERENCE LINE across the plot at one value — a target, a limit, a budget, last year's average.
+///
+///     Rule(value: 60000.0, label: "Target");
+///
+/// Drawn dashed, in the annotation ink rather than a palette hue, so it never reads as a series. It follows the
+/// orientation: horizontal on a column chart, vertical on a `Bar` chart, because it always crosses the VALUE axis.
+///
+/// The label sits at the end of the line, clear of the plot edge.
+[AllowAnonymous] component Rule(double value, string label = "", string? color = null,
+                                AnnotationKind kind = AnnotationKind.Rule) : Annotation;
+
+/// A SHADED BAND between two values — an acceptable range, a control limit, a forecast envelope.
+///
+///     Band(from: 55000.0, to: 65000.0, label: "Target range");
+///
+/// Drawn BEHIND the marks, washed at low opacity for the reason an `Area` is: opacity blends with whatever surface
+/// is really there, so one declaration is right on a light theme and on a dark one.
+[AllowAnonymous] component Band(double from, double to, string label = "", string? color = null,
+                                AnnotationKind kind = AnnotationKind.Band) : Annotation;
+
+/// A LABELLED POINT at one category and one value — "the release landed here", "this is the outlier".
+///
+///     Note(category: "Apr", value: 61000.0, label: "v2 launch");
+///
+/// The label picks its own side. It sits to the right of the dot unless it would not fit there, measured with
+/// `Layout.TextWidth` against the plot's real width, so a note on the last category flips to the left instead of
+/// being clipped by the plot edge. The category index alone cannot decide this: "v2 launch" and
+/// "Q3 reforecast complete" need different amounts of room at the same position.
+[AllowAnonymous] component Note(string category, double value, string label, string? color = null,
+                                AnnotationKind kind = AnnotationKind.Note) : Annotation;
+
+/// An axis. `Axis(side: Left)` is the value axis; `Axis(side: Bottom)` names the categories.
+[AllowAnonymous] component Axis(AxisSide side = AxisSide.Left, bool grid = true, int ticks = 4,
+                                string title = "", string format = "",
+                                string prefix = "", string suffix = "",
+                                double? min = null, double? max = null) : AxisDef;
+
+// ── what the pieces pass each other ──────────────────────────────────────────────────────────────────────
+
+/// The resolved chart: everything `Chart` works out, in one value, for every piece below it.
+///
+/// Not author-facing. An app writes `Chart(…) { Column(…); Axis(…); }` and never names this. It exists because the
+/// chart's pieces form a deep chain (`Chart` → `ChartBody` → `Plot` → `HoverBand` → `HoverCell` → `Readout`) and
+/// nearly every one of them needs most of the same facts. Passed individually, those facts would make for long
+/// signatures, and adding one would mean editing every signature and call site along the chain.
+///
+/// A parameter object, deliberately, rather than an ambient provide/inject value. An ambient value would remove the
+/// parameter from the signatures, and with it the only visible statement of what a piece depends on.
+///
+/// `Marks` is the full list, including hidden series. The scale is computed over the visible subset before this is
+/// built (`Lo`/`Top`/`Ticks` already account for it), but the list itself stays whole because a palette slot follows
+/// the series: hiding series 2 must not repaint series 3 to 8. `VisibleMarks(c.Marks, c.Hidden)` is how a drawing
+/// pass gets the subset, and `SlotOf` is always asked of `Marks`.
+public class ChartCtx {
+  /// Every series as written, hidden ones included (see the note above).
+  public Mark[] Marks;
+  /// The category names, in order.
+  public string[] Labels;
+  /// Which series are switched off, by label.
+  public string[] Hidden;
+  /// The annotations, in the order written. Not in the scale and not in the legend — see `Annotation`.
+  public Annotation[] Annotations;
+  /// The VALUE axis in force — the one the author declared for the orientation's value side, or a default.
+  public AxisDef Axis;
+
+  /// The bottom of the painted scale.
+  public double Lo;
+  /// The top of the painted scale — the highest tick, so the tallest mark meets a gridline.
+  public double Top;
+  /// The tick VALUES, top-down (the paint order for a vertical axis).
+  public double[] Ticks;
+  /// The plot's height in px.
+  public int Height;
+
+  /// Is this chart transposed? True the moment any mark is a `Bar`.
+  public bool Horizontal;
+  /// Are the bar series stacked rather than grouped?
+  public bool Stacked;
+  /// Draw the gridlines.
+  public bool ShowGrid;
+  /// Print each value on its mark.
+  public bool ShowValues;
+  /// Stripped to just the marks — no card, no axes, no legend, no hover (`chrome: Bare`).
+  public bool Bare;
+  /// Draw the value-axis strip.
+  public bool HasValueAxis;
+  /// Draw the category strip.
+  public bool HasCategoryAxis;
+}

@@ -1,0 +1,199 @@
+namespace Osysharp.Charts;
+
+// ── the hover readout ────────────────────────────────────────────────────────────────────────────────────
+//
+// One mechanism for every mark kind. The obvious build is a tooltip per mark (a box inside each column, another
+// inside each dot), which gives subtly different behaviour per kind and does not work for a line at all, because a
+// line has no element at the point you are pointing at.
+//
+// Instead the plot carries an invisible band of one full-height cell per category. Hovering a cell reveals a
+// crosshair and a readout naming every series' value in that category. That is the shared-crosshair behaviour a
+// line chart wants, and it is right for columns and dots too, so a reader who learns it on a bar chart already knows
+// it on a line chart.
+//
+// It needs no JavaScript. `inside HoverCell.Hover { Opacity = 1; }` is an ancestor-conditioned variant that compiles
+// to a descendant `:hover` CSS rule: no pointer handler, no coordinate arithmetic and no measurement. That is only
+// possible because the marks are elements; on a `<canvas>` it would be hit-testing against pixel coordinates.
+
+/// How many categories this chart has — the labels, or the longest series if a mark carries more values than there
+/// are labels.
+int SlotCount(Mark[] marks, string[] labels) {
+  return Math.Max(labels.Length, marks.Max(m => m.Values.Length) ?? 0);
+}
+
+/// The hover band — one invisible cell per category, laid over the whole plot.
+///
+/// It sits on top, so the band receives the pointer, not the marks beneath it. That is deliberate: a per-mark hover
+/// would fire over a bar and stay silent between bars. The marks keep their `role` and `aria-label`, and pointer
+/// events do not affect the accessibility tree, so screen-reader and keyboard users are unaffected.
+[AllowAnonymous]
+[Composable]
+[Part]
+component HoverBand(ChartCtx c, int count) {
+  render {
+    // The band runs along the category axis: a row of full-height cells on a column chart, a stack of full-width cells
+    // on a bar chart. It is one cell component either way, because `inside HoverCell.Hover { … }` names a component, so
+    // a second cell component would need a second crosshair and readout to name it. Orientation is a prop, and each
+    // piece handles it where it fits best: the cell in its render (a Row or a Stack), the crosshair and the readout in
+    // a `horizontal` variant block.
+    //
+    // The plot's own width is measured here and passed down. This component's root fills the plot, which is what makes
+    // the number the plot's rather than the page's; that needs both `[Composable]` above and a root that spans the
+    // plot. Measured against a larger ancestor, every flip decision below would wrongly conclude that the readout fits.
+    //
+    // `Layout.Width` is null on the server, where nothing is painted yet. The fallback keeps the centred placement, and
+    // the client's first pass corrects the edges.
+    var plotW = Layout.Width ?? 0.0;
+    if (c.Horizontal) {
+      Stack(position: Position.Absolute, inset: 0) {
+        foreach (var i in Enumerable.Range(0, count)) { HoverCell(c: c, index: i, plotW: plotW, count: count); }
+      }
+    } else {
+      Row(position: Position.Absolute, inset: 0) {
+        foreach (var i in Enumerable.Range(0, count)) { HoverCell(c: c, index: i, plotW: plotW, count: count); }
+      }
+    }
+  }
+}
+
+/// One category's hover target, in either orientation. Its own root is what `:hover` matches, which is why this is a
+/// component rather than a `Box` in the loop above: an ancestor-conditioned variant names a component.
+///
+/// One component rather than one per orientation, because a second cell component would need a second crosshair and
+/// a second readout to name it, for a difference that is one prop.
+[AllowAnonymous]
+[Composable]
+[Part]
+component HoverCell(ChartCtx c, int index, double plotW = 0.0, int count = 0) {
+  variants { base { Position = Position.Relative; } }
+  render {
+    // `grow`/`basis`/`w`/`h` are element props: they size this cell inside the band. The variants block holds only what
+    // belongs on the component's own class, which is what the crosshair's and readout's `:hover` rules hang off.
+    //
+    // Orientation is handled in the render rather than in a variant, because what differs is which way the cell stacks
+    // its children (a Row or a Stack), and that is a question of tree structure, not style.
+    if (c.Horizontal) {
+      Row(grow: 1, basis: 0, w: "100%") {
+        Crosshair(horizontal: true);
+        Readout(c: c, index: index, horizontal: true, plotW: plotW, count: count);
+      }
+    } else {
+      Stack(grow: 1, basis: 0, h: "100%") {
+        Crosshair();
+        Readout(c: c, index: index, plotW: plotW, count: count);
+      }
+    }
+  }
+}
+
+/// The rule through the hovered category. `PointerEvents = None` so it can never take the pointer from the cell that
+/// reveals it — which would make it flicker as the pointer crossed its own 1px.
+[AllowAnonymous]
+[Composable]
+[Part]
+component Crosshair(bool horizontal = false) {
+  variants {
+    base { Opacity = 0; Transition = Motion.ChartFade; Position = Position.Absolute; Bg = Colors.ChartCross; PointerEvents = PointerEvents.None;
+           Top = 0; Bottom = 0; Left = "50%"; W = 1;
+           inside HoverCell.Hover { Opacity = 1; } }
+    // The transpose: a bar chart's crosshair runs along the row, not down it.
+    //
+    // Every geometry property the base sets is answered here, including the two that go back to `auto`. The two
+    // orientations share the colour, the fade and the pointer rule, and nothing about shape: leaving `Bottom`/`W`
+    // unanswered would give a horizontal rule that is also full-height and 1px wide.
+    horizontal { Top = "50%"; Bottom = "auto"; Left = 0; Right = 0; W = "auto"; H = 1; }
+  }
+  render { Box(); }
+}
+
+/// The readout — the category, then every series' value in it, each beside its own swatch.
+///
+/// Every series at once, not just the one under the pointer: comparing series AT a category is the question a
+/// multi-series chart exists to answer, and answering it one series at a time makes the reader do the join.
+[AllowAnonymous]
+[Composable]
+[Part]
+component Readout(ChartCtx c, int index, bool horizontal = false, double plotW = 0.0, int count = 0) {
+  variants {
+    base { Opacity = 0; Transition = Motion.ChartFade; Position = Position.Absolute; Top = 2; Left = "50%";
+           Bg = Colors.ChartTipBg; Color = Colors.ChartTipInk; Px = 3; Py = 2; Rounded = 6; WhiteSpace = WhiteSpace.Nowrap;
+           Z = ZIndex.ChartTip; PointerEvents = PointerEvents.None;
+           inside HoverCell.Hover { Opacity = 1; } }
+    // On a horizontal chart the readout anchors to the LEFT of the plot rather than centring on the pointer: a bar
+    // chart's rows are short, so a centred box would sit on top of the bar it is describing. The centring transform
+    // moves to the other axis with it.
+    horizontal { Left = 2; Top = "50%"; TranslateY = "-50%"; }
+  }
+  render {
+    // The readout shifts itself inward at the plot edge. Centred on its cell, a long series name on a narrow chart
+    // would hang past the first or last category and be clipped by the plot, hiding exactly the label the reader
+    // hovered to read.
+    //
+    // The decision is a measurement, not a category-index rule: whether it fits depends on this readout's painted width
+    // in this plot, and "Enterprise renewals: £184,000" and "EMEA: £12" need very different room at the same position.
+    // The readout's width comes from `ReadoutWidth`; `plotW` arrives from `HoverBand`, whose root spans the plot.
+    //
+    // `translateX` is an element prop here, not a `variants` entry, because a variants dimension is keyed by an
+    // enum-typed parameter and cannot carry a computed value. The centring is unchanged (`-50%` of the readout's own
+    // width against the cell's midpoint); the shift is added to it, and is zero except in cells that would overflow.
+    var w = ReadoutWidth(c, index);
+    var half = w / 2.0;
+    var centre = count > 0 ? ((double)index + 0.5) * plotW / (double)count : 0.0;
+    var overLeft = half - centre;                  // > 0 → hangs past the plot's left edge
+    var overRight = centre + half - plotW;         // > 0 → hangs past the right edge
+    // On the server (or before the first measurement) both widths are 0 and the shift is 0, giving the centred
+    // placement; the client's first pass corrects the edges.
+    var shift = plotW <= 0.0 || w <= 0.0
+                  ? 0.0
+                  : (overLeft > 0.0 ? overLeft : (overRight > 0.0 ? 0.0 - overRight : 0.0));
+    // The horizontal chart already anchors to the plot's left edge, so it has nothing to flip.
+    Box(translateX: horizontal ? "0" : $"calc(-50% + {shift}px)") {
+      ReadoutBody(c: c, index: index);
+    }
+  }
+}
+
+/// How wide the readout for one category will paint: its widest line, plus its own padding.
+///
+/// Measured from the text, not from the box. Asking `Layout.Width` for the readout's own width from inside the
+/// readout depends on the very element being positioned, so the value can lag its content by a layout pass.
+/// `Layout.TextWidth` is a pure function of the string and the font, so there is nothing to lag.
+///
+/// This must mirror `ReadoutBody`'s lines exactly: the category, then one row per visible mark, each
+/// `swatch(8) + gap(8) + "<label> <value>"`. Describing one box in two places is the price of not measuring the box
+/// itself; if the two drift apart, the readout overhangs the plot edge.
+double ReadoutWidth(ChartCtx c, int index) {
+  var w = index < c.Labels.Length ? (Layout.TextWidth(c.Labels[index]) ?? 0.0) : 0.0;
+  foreach (var m in VisibleMarks(c.Marks, c.Hidden)) {
+    if (index < m.Values.Length) {
+      var line = (Layout.TextWidth($"{m.Label} {Formatted(m.Values[index], c.Axis)}") ?? 0.0) + 16.0;
+      if (line > w) { w = line; }
+    }
+  }
+  // `Px = 3` on the readout — 12px of padding each side.
+  return w > 0.0 ? w + 24.0 : 0.0;
+}
+
+/// WHAT a readout says — shared by both orientations, so the horizontal chart cannot grow its own wording.
+[AllowAnonymous]
+[Composable]
+[Part]
+component ReadoutBody(ChartCtx c, int index) {
+  render {
+    Stack(gap: 1) {
+      if (index < c.Labels.Length) {
+        Text(c.Labels[index], fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: Colors.ChartTipInk);
+      }
+      // A switched-off series is not in the readout either: a tooltip naming a series that is not on the chart is
+      // confusing. The swatch still asks `SlotOf` of the full list, so a visible series keeps its colour.
+      foreach (var m in VisibleMarks(c.Marks, c.Hidden)) {
+        if (index < m.Values.Length) {
+          Row(gap: 2, align: Align.Center) {
+            Box(w: 8, h: 8, rounded: 4, bg: ColorOf(m, SlotOf(c.Marks, m)), shrink: 0);
+            Text($"{m.Label} {Formatted(m.Values[index], c.Axis)}", fontSize: FontSize.ChartTick, color: Colors.ChartTipInk);
+          }
+        }
+      }
+    }
+  }
+}

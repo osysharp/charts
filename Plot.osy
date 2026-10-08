@@ -1,0 +1,647 @@
+namespace Osysharp.Charts;
+
+/// The plot area: gridlines, then every mark, as absolutely positioned layers over one relative box.
+///
+/// Layers rather than a coordinate system. Columns are flexbox (`Row(align: Align.End)` of percentage-height boxes),
+/// so they need no arithmetic and stay real elements with real hover. Only the shapes flexbox cannot express (a line,
+/// an area) go through `Path`, drawn in a nominal coordinate space and stretched to the box.
+[AllowAnonymous]
+[Composable]
+// `[Composable]` gives this component its own render root. `Layout.Width` measures the nearest render root, so a
+// component that measures itself must be composable, or it reads an ancestor's width (the page's, say) instead.
+[Part]
+component Plot(ChartCtx c) {
+  render {
+    // The names this render reads, bound once so the picture below is not `c.` all the way down. Every one of them
+    // is a plain read of the resolved chart — nothing is recomputed here.
+    var marks = c.Marks;
+    var labels = c.Labels;
+    var hidden = c.Hidden;
+    var axis = c.Axis;
+    var lo = c.Lo;
+    var top = c.Top;
+    var ticks = c.Ticks;
+    var height = c.Height;
+    var horizontal = c.Horizontal;
+    var stacked = c.Stacked;
+    var showGrid = c.ShowGrid;
+    var showValues = c.ShowValues;
+    // The line and area geometry is drawn in a nominal space and stretched (`Path(stretch: true)`), so nothing here
+    // measures anything. The browser maps the viewBox onto the box, so a resize costs no re-render, no observer and no
+    // arithmetic, and the shape is correct at every width, including the server's first paint. Drawing to the
+    // container's measured pixel width instead would re-render on every resize, and be wrong whenever the wrong box was
+    // measured.
+    //
+    // Overflow is hidden only where something overflows. A vertical chart's `Path` marks are stretched, so a stroke's
+    // join can spill a pixel past the box and must be clipped. A horizontal chart has no paths, but it does have a
+    // value label just past the end of each bar, and clipping would truncate the number on the bar that nearly fills
+    // the scale. The label spills into the card's own padding instead.
+    Box(position: Position.Relative, h: height, w: "100%", overflow: horizontal ? Overflow.Visible : Overflow.Hidden) {
+      // The gridlines, evenly spaced with `justify: Between`. The axis labels are placed at the same fractions
+      // (`TickPct`), so a tick and its line stay together.
+      if (showGrid) {
+        // A gridline runs across the value axis, so it is a horizontal rule on a column chart and a vertical one on a
+        // bar chart.
+        if (horizontal) {
+          Row(position: Position.Absolute, inset: 0, justify: Justify.Between) {
+            // `h: "100%"` is not redundant. A Stack's children fill its cross axis, so the horizontal rules below need
+            // no width, but a Row's children do not: without it these would be 1×0 boxes, present in the DOM and
+            // invisible.
+            foreach (var t in ticks) { Box(w: 1, h: "100%", bg: Colors.ChartGrid); }
+          }
+        } else {
+          Stack(position: Position.Absolute, inset: 0, justify: Justify.Between) {
+            foreach (var t in ticks) { Box(h: 1, bg: Colors.ChartGrid); }
+          }
+        }
+      }
+      // Annotation bands are context, so they sit behind the data. They come after the gridlines because a band is
+      // denser than a hairline and would otherwise hide them.
+      if (HasKind(c.Annotations, AnnotationKind.Band)) { AnnotationBands(c: c); }
+      // Stacked series are drawn in one pass, because a stack is one object per category: each segment's position
+      // depends on the segments below it, which a per-series pass cannot know.
+      if (stacked && ColumnCount(marks) > 0) {
+        if (horizontal) {
+          StackedBarsFrom(marks: marks, lo: lo, top: top, showValues: showValues, labels: labels, axis: axis, hidden: hidden);
+        } else {
+          StackedColumnsFrom(marks: marks, lo: lo, top: top, showValues: showValues, labels: labels, axis: axis, hidden: hidden);
+        }
+      }
+      // The visibility filter is applied once, here, and every pass below iterates the result, so no pass can forget to
+      // skip a hidden series.
+      //
+      // `SlotOf` is still asked of the full `marks`: a palette slot follows the series, not its rank among the visible
+      // ones, so hiding series 2 must not repaint series 3 to 8.
+      var shown = VisibleMarks(marks, hidden);
+      foreach (var m in shown) {
+        if (m.Kind == MarkKind.Bar && !stacked) {
+          Bars(m: m, lo: lo, top: top, color: ColorOf(m, SlotOf(marks, m)), showValues: showValues,
+               index: ColumnIndex(marks, m), count: ColumnCount(marks), axis: axis, bare: c.Bare);
+        }
+      }
+      // Candles before lines, for the same reason columns come before them: a moving average is drawn over the sessions
+      // it averages.
+      //
+      // Selected by type, not by `Kind`: `OfType<CandleMark>()` narrows and re-types in one step, which is why
+      // `Candles` can take a `CandleMark` and read `.Highs` directly.
+      foreach (var m in shown.OfType<CandleMark>()) {
+        Candles(m: m, lo: lo, top: top, color: m.Color, axis: axis);
+      }
+      // Column marks first, so lines and points draw OVER them.
+      foreach (var m in shown) {
+        if (m.Kind == MarkKind.Column && !stacked) {
+          Columns(m: m, lo: lo, top: top, color: ColorOf(m, SlotOf(marks, m)), showValues: showValues, labels: labels,
+                  index: ColumnIndex(marks, m), count: ColumnCount(marks), axis: axis, bare: c.Bare);
+        }
+      }
+      foreach (var m in shown) {
+        if (m.Kind == MarkKind.Area) {
+          // The wash is the series colour at low opacity, which is a light/dark-mode decision rather than a style one.
+          // A fixed light ramp step (`Series1.Muted`) is right on white and wrong on near-black, where it becomes the
+          // brightest thing on the page. Opacity blends with whatever surface is actually there, so one declaration is
+          // correct in both modes and in themes this kit has never seen.
+          //
+          // The usual objection to opacity, that two overlapping washes stop looking like either series, does not
+          // apply: the path is fill-only (its line is drawn separately), and an area chart is meant for one series.
+          Path(points: AreaPointsOf(m.Values, lo, top, PlotSpace(), (double)height),
+               // Fill only, no stroke. The area's outline closes down to the baseline and back along it, so stroking it
+               // would draw a vertical rule at each end and a line along the bottom: three edges that are not data. The
+               // series' own line is drawn separately, over the top, by the line pass below.
+               fill: ColorOf(m, SlotOf(marks, m)), width: 0, opacity: 0.16,
+               w: PlotSpace(), h: height, position: Position.Absolute, inset: 0, stretch: true);
+        }
+      }
+      foreach (var m in shown) {
+        // An AREA gets a line too — the wash is the fill and this is its edge.
+        if (m.Kind == MarkKind.Line || m.Kind == MarkKind.Area) {
+          Path(points: PointsOf(m.Values, lo, top, PlotSpace(), (double)height),
+               stroke: ColorOf(m, SlotOf(marks, m)), width: 2, smooth: false,
+               w: PlotSpace(), h: height, position: Position.Absolute, inset: 0, stretch: true);
+        }
+      }
+      foreach (var m in shown) {
+        if (m.Kind == MarkKind.Scatter) {
+          Dots(m: m, lo: lo, top: top, color: ColorOf(m, SlotOf(marks, m)), axis: axis);
+        }
+      }
+      // Annotation rules and notes are claims about the data, so they sit over it: a target line hidden behind the
+      // column that reaches it would be hidden exactly when it matters.
+      if (HasKind(c.Annotations, AnnotationKind.Rule) || HasKind(c.Annotations, AnnotationKind.Note)) {
+        AnnotationMarks(c: c);
+      }
+      // Last, so it is on top of every mark: the band has to receive the pointer for all of them.
+      //
+      // Not in bare mode. A readout naming every series is several times the size of a sparkline, which is read as a
+      // shape rather than point by point, and an invisible full-size hit target over a 28px inline element is a
+      // nuisance in a table row.
+      if (!c.Bare) { HoverBand(c: c, count: SlotCount(marks, labels)); }
+    }
+  }
+}
+
+/// This mark's slot in the fixed palette order — its position among the marks as written.
+///
+/// Named rather than inlined because the NAME carries the rule: a palette slot follows the SERIES, so this is asked
+/// of the full `marks` and never of the visible subset.
+int SlotOf(Mark[] marks, Mark m) { return IndexOfMark(marks, m); }
+
+/// How many column series this chart has: the number of bars that must share each category slot.
+///
+/// Each column series gets its own sub-slot. Drawing every series as an overlay of the same box would put two
+/// series' bars at the same x from the same baseline, one in front of the other, which reads as a stacked bar chart
+/// and is wrong both ways: with North=12 and South=8 the reader sees a stack whose total looks like 12 when the
+/// values sum to 20, and wherever South is the taller of the two, North is hidden behind it.
+int ColumnCount(Mark[] marks) { return BarMarks(marks).Length; }
+
+/// This column series' position among the column series — which sub-slot its bars occupy inside each category.
+///
+/// Counted over COLUMN marks only, so a line drawn between two column series does not push the second one's bars
+/// into a third sub-slot and leave a gap where nothing is ever drawn.
+int ColumnIndex(Mark[] marks, Mark m) { return IndexOfMark(BarMarks(marks), m); }
+
+/// The column marks of one series.
+///
+/// Each column is a real element with its own accessible name, so a screen reader reads "Revenue: 42". That is the
+/// argument for elements over canvas, and it costs one `label:`.
+[AllowAnonymous]
+[Composable]
+[Part]
+component Columns(Mark m, double lo, double top, string color, bool showValues, string[] labels,
+                  AxisDef axis, int index = 0, int count = 1, bool bare = false) {
+  render {
+    // `align: End` grows every bar from ONE baseline; the 2px gap is surface doing the separating, so neighbouring
+    // bars read distinct without a stroke drawn around them.
+    Row(position: Position.Absolute, inset: 0, align: Align.End, gap: 2, role: UiRole.List, label: m.Label) {
+      foreach (var v in m.Values) {
+        // One category slot, divided into `count` sub-slots: this series draws in the one at `index` and leaves the
+        // rest empty. Every column series renders the same structure, so their bars land side by side instead of on top
+        // of each other, and the division is done by `grow: 1` rather than by arithmetic.
+        //
+        // With one column series this is a single sub-slot, so the common case pays nothing for grouping.
+        Row(grow: 1, basis: 0, h: "100%", align: Align.End, justify: Justify.Center, gap: 1) {
+          foreach (var s in Enumerable.Range(0, count)) {
+            // ⭐ THE SLOT IS SPLIT AT THE ZERO LINE (ledger #chart-negative-bars): everything above it is the region a
+            //   positive value grows UP through, everything below it the region a negative value grows DOWN through.
+            //   With no negative value on the chart `ZeroPct` is 0, the lower region is zero-tall, and this lays out
+            //   exactly as the single region it replaces.
+            //
+            //   A clamp is what this replaces, and a clamp is the worst of the options: `PercentOf` answered 0 for a
+            //   negative value, so the bar was PRESENT, accessible, correctly labelled — and zero pixels tall.
+            Stack(grow: 1, basis: 0, h: "100%", gap: 0) {
+              Stack(h: $"{100.0 - ZeroPct(lo, top)}%", align: Align.Center, justify: Justify.End, gap: 1) {
+                if (s == index && v >= 0.0) {
+                  if (showValues) { Text(Formatted(v, axis), fontSize: FontSize.ChartTick, color: Colors.ChartMuted); }
+                  // `maxW` caps the bar so a three-bar chart does not paint three slabs; the rest of the slot is air.
+                  //
+                  // The cap is smaller in bare mode: 26px is a fraction of a 260px chart but most of a 28px sparkline,
+                  // where six bars 26 wide would be wider than they are tall and read as a row of blobs rather than as a
+                  // series. The corner radius shrinks with it, since 3px on a narrow bar is the whole bar.
+                  Box(w: "100%", maxW: bare ? 10 : 26, shrink: 0,
+                      h: $"{SlicePct(BarPct(v, lo, top), 100.0 - ZeroPct(lo, top))}%", bg: color,
+                      rounded: bare ? 1 : 3, role: UiRole.ListItem, label: MarkLabel(m, v, axis));
+                }
+              }
+              // Below the line: the bar hangs from the zero line, so it is the FIRST child of a region that starts
+              // there — and its value label goes under it, where the bar is not.
+              Stack(h: $"{ZeroPct(lo, top)}%", align: Align.Center, justify: Justify.Start, gap: 1) {
+                if (s == index && v < 0.0) {
+                  Box(w: "100%", maxW: bare ? 10 : 26, shrink: 0,
+                      h: $"{SlicePct(BarPct(v, lo, top), ZeroPct(lo, top))}%", bg: color,
+                      rounded: bare ? 1 : 3, role: UiRole.ListItem, label: MarkLabel(m, v, axis));
+                  if (showValues) { Text(Formatted(v, axis), fontSize: FontSize.ChartTick, color: Colors.ChartMuted); }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Candles: one object per session, a wick from low to high and a body from open to close.
+///
+/// Every piece is a `Box` in a flex slot, like a column. There is no coordinate arithmetic and no `Path`: the wick
+/// is a 1px-wide box positioned by percentage of the plot, the body is a box of a percentage height, and the browser
+/// does the rest, so a resize costs no re-render and the shape is right on the server's first paint.
+///
+/// Direction uses two channels. An up session is hollow and green; a down session is filled and red. The
+/// hollow/filled convention predates colour on price charts and survives a greyscale print, a `forced-colors` display
+/// and red/green colour-vision deficiency. `color` overrides the outline for a chart that wants one hue, and then
+/// hollow versus filled carries the direction alone.
+///
+/// A flat session (open == close) still has a body. Its height would be 0%, which paints nothing and reads as
+/// missing data rather than an unchanged price, so the body has a 1px floor. That is the doji, a real and common
+/// session.
+[AllowAnonymous]
+[Composable]
+[Part]
+component Candles(CandleMark m, double lo, double top, string? color, AxisDef axis) {
+  render {
+    Row(position: Position.Absolute, inset: 0, align: Align.End, role: UiRole.List, label: m.Label) {
+      foreach (var i in Enumerable.Range(0, m.Values.Length)) {
+        var close = m.Values[i];
+        var open  = i < m.Opens.Length ? m.Opens[i] : close;
+        var high  = i < m.Highs.Length ? m.Highs[i] : (close > open ? close : open);
+        var low   = i < m.Lows.Length  ? m.Lows[i]  : (close < open ? close : open);
+        var up    = close >= open;
+        var hue   = color != null ? color : (up ? "var(--colors-chartup)" : "var(--colors-chartdown)");
+        // Percentages OF THE PLOT, from the same `PercentOf` every other mark uses — so a candle and a line on one
+        // chart cannot disagree about where a price is.
+        var bodyTop = PercentOf(up ? close : open, lo, top);
+        var bodyBot = PercentOf(up ? open : close, lo, top);
+        Row(grow: 1, basis: 0, h: "100%", justify: Justify.Center, position: Position.Relative,
+            role: UiRole.ListItem, label: CandleLabel(m, i, open, high, low, close, axis)) {
+          // The wick: full low-to-high, behind the body, 1px wide and centred.
+          Box(position: Position.Absolute, w: 1, bg: hue,
+              bottom: $"{PercentOf(low, lo, top)}%", h: $"{PercentOf(high, lo, top) - PercentOf(low, lo, top)}%");
+          // The body. `maxW` caps it so a six-session chart does not paint six slabs; `minH` is the doji floor.
+          Box(position: Position.Absolute, w: "70%", maxW: 14, bottom: $"{bodyBot}%", minH: 1,
+              h: $"{bodyTop - bodyBot}%",
+              bg: up ? Colors.ChartSurface : hue, borderW: 1, border: hue, rounded: 1);
+        }
+      }
+    }
+  }
+}
+
+/// What a screen reader is told about one session: all four numbers, because a candle is four numbers and reading
+/// out only the close would describe a line chart.
+string CandleLabel(Mark m, int i, double open, double high, double low, double close, AxisDef axis) {
+  return $"{m.Label} {(close >= open ? "up" : "down")}: open {Formatted(open, axis)}, high {Formatted(high, axis)}, "
+       + $"low {Formatted(low, axis)}, close {Formatted(close, axis)}";
+}
+
+/// Scatter points — ≥8px so they are a real hit target, each with a 2px surface ring so points stay legible where
+/// they overlap each other or cross a line.
+[AllowAnonymous]
+[Composable]
+[Part]
+component Dots(Mark m, double lo, double top, string color, AxisDef axis) {
+  render {
+    Row(position: Position.Absolute, inset: 0, align: Align.End, role: UiRole.List, label: m.Label) {
+      foreach (var v in m.Values) {
+        Stack(grow: 1, basis: 0, align: Align.Center, justify: Justify.End, h: "100%") {
+          Box(h: $"{PercentOf(v, lo, top)}%", justify: Justify.Start, align: Align.Center) {
+            Box(w: 10, h: 10, rounded: 6, bg: color, borderW: 2, border: Colors.ChartSurface,
+                role: UiRole.ListItem, label: MarkLabel(m, v, axis), my: -5);
+          }
+        }
+      }
+    }
+  }
+}
+
+/// The bar marks of one series: the transpose of `Columns`.
+///
+/// Each decision here is `Columns`' decision reflected: one category slot per value, divided into `count` sub-slots
+/// so two bar series sit one above the other rather than one behind the other, `maxH` capping the bar so a
+/// two-series chart does not paint slabs, and each bar a real element with its own accessible name.
+///
+/// The value label goes after the bar, not above it. Above is where it goes on a column; here it would sit on the
+/// bar's own row and be overprinted once the bar is long enough to reach it.
+[AllowAnonymous]
+[Composable]
+[Part]
+component Bars(Mark m, double lo, double top, string color, bool showValues,
+               AxisDef axis, int index = 0, int count = 1, bool bare = false) {
+  render {
+    Stack(position: Position.Absolute, inset: 0, gap: 2, role: UiRole.List, label: m.Label) {
+      foreach (var v in m.Values) {
+        Stack(grow: 1, basis: 0, w: "100%", justify: Justify.Center, gap: 1) {
+          foreach (var s in Enumerable.Range(0, count)) {
+            // The transpose of the column split: the row divides at the zero line into a LEFT region a negative
+            // value grows back through and a RIGHT region a positive one grows out through (#chart-negative-bars).
+            Row(grow: 1, basis: 0, align: Align.Center, w: "100%", gap: 0) {
+              Row(w: $"{ZeroPct(lo, top)}%", h: "100%", align: Align.Center, justify: Justify.End, gap: 2) {
+                if (s == index && v < 0.0) {
+                  if (showValues) { Text(Formatted(v, axis), fontSize: FontSize.ChartTick, color: Colors.ChartMuted); }
+                  Box(h: "100%", maxH: bare ? 10 : 26, shrink: 0,
+                      w: $"{SlicePct(BarPct(v, lo, top), ZeroPct(lo, top))}%", bg: color,
+                      rounded: 3, role: UiRole.ListItem, label: MarkLabel(m, v, axis));
+                }
+              }
+              Row(w: $"{100.0 - ZeroPct(lo, top)}%", h: "100%", align: Align.Center, gap: 2) {
+                if (s == index && v >= 0.0) {
+                  Box(h: "100%", maxH: bare ? 10 : 26, shrink: 0,
+                      w: $"{SlicePct(BarPct(v, lo, top), 100.0 - ZeroPct(lo, top))}%", bg: color,
+                      rounded: 3, role: UiRole.ListItem, label: MarkLabel(m, v, axis));
+                  if (showValues) { Text(Formatted(v, axis), fontSize: FontSize.ChartTick, color: Colors.ChartMuted); }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Stacked columns: one column per category, segmented by series.
+///
+/// The segments are square, not rounded like a grouped bar. A rounded segment reads as a bar in its own right, which
+/// is the opposite of what a stack says: square joins show that the segments form one object.
+///
+/// The value label, when asked for, is the total and sits above the stack. A number per segment is unreadable at any
+/// realistic size, and a number on the top segment alone is easily misread as the total.
+///
+/// Drawn from a zero floor: every value stacks upwards. A chart draws the stack with the floor its scale starts at, so
+/// negative values hang below the zero line — this part keeps the shape it was published with.
+[AllowAnonymous]
+[Composable]
+[Part]
+component StackedColumns(Mark[] marks, double top, bool showValues, string[] labels, AxisDef axis, string[] hidden) {
+  render {
+    StackedColumnsFrom(marks: marks, lo: 0, top: top, showValues: showValues, labels: labels, axis: axis, hidden: hidden);
+  }
+}
+
+/// Stacked columns over a scale from `lo` to `top` — the stack a chart draws, with negative values below the zero line.
+[AllowAnonymous]
+[Composable]
+[Part]
+internal component StackedColumnsFrom(Mark[] marks, double lo, double top, bool showValues, string[] labels,
+                                      AxisDef axis, string[] hidden) {
+  render {
+    Row(position: Position.Absolute, inset: 0, align: Align.End, gap: 2, role: UiRole.List, label: "Stacked series") {
+      foreach (var i in Enumerable.Range(0, SlotCount(marks, labels))) {
+        Stack(grow: 1, basis: 0, h: "100%", gap: 0) {
+          // Bound ONCE for this category and read below. Everything geometric reads the VISIBLE list; only
+          // `SlotOf(marks, m)` keeps the full one, because a palette slot follows the series, not its rank.
+          var visible = VisibleMarks(marks, hidden);
+          // ⭐ A MIXED-SIGN STACK IS TWO STACKS SHARING THE ZERO LINE (#chart-negative-bars): the positives grow up
+          //   from it and the negatives down. The VALUE LABEL stays the net total, because that is what the stack
+          //   says and what the axis measures — the two halves are how it is DRAWN, not what it means.
+          var up = StackPositive(visible, i);
+          var down = StackNegative(visible, i);
+          Stack(h: $"{100.0 - ZeroPct(lo, top)}%", align: Align.Center, justify: Justify.End, gap: 1) {
+            if (showValues) { Text(Formatted(StackTotal(visible, i), axis), fontSize: FontSize.ChartTick, color: Colors.ChartMuted); }
+            // The half-stack's height is the visible positive total, and its segments are percentages of that same
+            // total, so hiding a series shrinks the stack rather than stretching the survivors past the scale's `top`.
+            Stack(w: "100%", maxW: 26, shrink: 0, h: $"{SlicePct(BarPct(up, lo, top), 100.0 - ZeroPct(lo, top))}%", justify: Justify.End) {
+              // Bottom first. A `Stack(justify: Justify.End)` puts its last child nearest the baseline, so the marks are
+              // walked in reverse and the series written first ends up at the bottom, which is what a legend read
+              // top-to-bottom leads a reader to expect.
+              foreach (var m in visible.Reverse().ToArray()) {
+                if (IsBarKind(m) && i < m.Values.Length && m.Values[i] > 0.0) {
+                  Box(w: "100%", h: $"{SegmentPct(m.Values[i], up)}%",
+                      bg: ColorOf(m, SlotOf(marks, m)),
+                      role: UiRole.ListItem,
+                      label: MarkLabel(m, m.Values[i], axis));
+                }
+              }
+            }
+          }
+          // Below the line: the half-stack hangs from it, so it is the first child of a region that starts there and
+          // the segments are walked in declaration order (the series written first sits nearest the line).
+          Stack(h: $"{ZeroPct(lo, top)}%", align: Align.Center, justify: Justify.Start, gap: 1) {
+            Stack(w: "100%", maxW: 26, shrink: 0, h: $"{SlicePct(BarPct(down, lo, top), ZeroPct(lo, top))}%", justify: Justify.Start) {
+              foreach (var m in visible) {
+                if (IsBarKind(m) && i < m.Values.Length && m.Values[i] < 0.0) {
+                  Box(w: "100%", h: $"{SegmentPct(m.Values[i], down)}%",
+                      bg: ColorOf(m, SlotOf(marks, m)),
+                      role: UiRole.ListItem,
+                      label: MarkLabel(m, m.Values[i], axis));
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/// STACKED bars — the transpose, growing rightwards from one baseline, drawn from a zero floor (see `StackedColumns`).
+[AllowAnonymous]
+[Composable]
+[Part]
+component StackedBars(Mark[] marks, double top, bool showValues, string[] labels, AxisDef axis, string[] hidden) {
+  render {
+    StackedBarsFrom(marks: marks, lo: 0, top: top, showValues: showValues, labels: labels, axis: axis, hidden: hidden);
+  }
+}
+
+/// Stacked bars over a scale from `lo` to `top` — the stack a chart draws, with negative values left of the zero line.
+[AllowAnonymous]
+[Composable]
+[Part]
+internal component StackedBarsFrom(Mark[] marks, double lo, double top, bool showValues, string[] labels,
+                                   AxisDef axis, string[] hidden) {
+  render {
+    Stack(position: Position.Absolute, inset: 0, gap: 2, role: UiRole.List, label: "Stacked series") {
+      foreach (var i in Enumerable.Range(0, SlotCount(marks, labels))) {
+        Row(grow: 1, basis: 0, w: "100%", align: Align.Center, gap: 0) {
+          var visible = VisibleMarks(marks, hidden);
+          var up = StackPositive(visible, i);
+          var down = StackNegative(visible, i);
+          // Left of the zero line: the negative half-stack, grown back towards the floor.
+          Row(w: $"{ZeroPct(lo, top)}%", h: "100%", align: Align.Center, justify: Justify.End) {
+            Row(w: $"{SlicePct(BarPct(down, lo, top), ZeroPct(lo, top))}%", h: "100%", maxH: 26, shrink: 0, align: Align.Center) {
+              foreach (var m in visible.Reverse().ToArray()) {
+                if (IsBarKind(m) && i < m.Values.Length && m.Values[i] < 0.0) {
+                  Box(h: "100%", w: $"{SegmentPct(m.Values[i], down)}%",
+                      bg: ColorOf(m, SlotOf(marks, m)),
+                      role: UiRole.ListItem, label: MarkLabel(m, m.Values[i], axis));
+                }
+              }
+            }
+          }
+          Row(w: $"{100.0 - ZeroPct(lo, top)}%", h: "100%", align: Align.Center, gap: 2) {
+            Row(w: $"{SlicePct(BarPct(up, lo, top), 100.0 - ZeroPct(lo, top))}%", h: "100%", maxH: 26, shrink: 0, align: Align.Center) {
+              foreach (var m in visible) {
+                if (IsBarKind(m) && i < m.Values.Length && m.Values[i] > 0.0) {
+                  Box(h: "100%", w: $"{SegmentPct(m.Values[i], up)}%",
+                      bg: ColorOf(m, SlotOf(marks, m)),
+                      role: UiRole.ListItem, label: MarkLabel(m, m.Values[i], axis));
+                }
+              }
+            }
+            if (showValues) { Text(Formatted(StackTotal(visible, i), axis), fontSize: FontSize.ChartTick, color: Colors.ChartMuted); }
+          }
+        }
+      }
+    }
+  }
+}
+
+/// One segment's share of its own stack, as a percentage.
+///
+/// A percentage of the stack, not of the plot: the stack is already sized as a percentage of the plot, so measuring
+/// the segment against the plot too would apply the scale twice and every stack would come out short. Two nested
+/// percentage boxes are what let a stack need no coordinate arithmetic.
+double SegmentPct(double v, double total) {
+  // By MAGNITUDE on both sides, because a negative half-stack's total is negative and a negative segment's share of
+  // it is positive. Clamping the ratio at zero — which is what this did — drew every negative segment as nothing.
+  var size = total < 0.0 ? 0.0 - total : total;
+  if (size <= 0.0) { return 0.0; }
+  var mag = v < 0.0 ? 0.0 - v : v;
+  var p = mag / size * 100.0;
+  return p > 100.0 ? 100.0 : p;
+}
+
+// ── ANNOTATIONS ──────────────────────────────────────────────────────────────────────────────────────────
+//
+// Two layers rather than one, because they sit on opposite sides of the marks and that is not a style choice:
+// a BAND is context and belongs behind the data it contextualises, while a RULE is a claim about the data and has to
+// be legible over the top of a column that reaches it. One layer would have to pick, and either pick is wrong for
+// half the annotations.
+
+/// The BAND layer — shaded regions, drawn behind every mark.
+///
+/// `PointerEvents: None` on the whole layer. It covers the plot, and the hover band is what turns a pointer into a
+/// readout; an annotation that swallowed the pointer would kill hover over exactly the region the author thought
+/// was worth pointing out.
+[AllowAnonymous]
+[Composable]
+[Part]
+component AnnotationBands(ChartCtx c) {
+  variants { base { PointerEvents = PointerEvents.None; } }
+  render {
+    Box(position: Position.Absolute, inset: 0) {
+      foreach (var a in OfKind(c.Annotations, AnnotationKind.Band)) {
+        var lo = AnnotationPct(BandLo(a), c.Lo, c.Top);
+        var hi = AnnotationPct(BandHi(a), c.Lo, c.Top);
+        var hue = a.Color != null ? a.Color : "var(--colors-chartnote)";
+        if (c.Horizontal) {
+          Box(position: Position.Absolute, top: 0, bottom: 0, left: $"{lo}%", w: $"{hi - lo}%", bg: hue, opacity: 0.12,
+              role: UiRole.ListItem, label: BandLabel(a, c.Lo, c.Top, c.Axis));
+        } else {
+          Box(position: Position.Absolute, left: 0, right: 0, bottom: $"{lo}%", h: $"{hi - lo}%", bg: hue, opacity: 0.12,
+              role: UiRole.ListItem, label: BandLabel(a, c.Lo, c.Top, c.Axis));
+        }
+      }
+    }
+  }
+}
+
+/// The RULE and NOTE layer — reference lines and labelled points, drawn over every mark.
+///
+/// This component measures itself, which is why it is `[Composable]` and why its root fills the plot: `Layout.Width`
+/// reads the nearest render root, so without both it would measure an ancestor such as the page, and every note
+/// label would choose its side against the wrong width.
+[AllowAnonymous]
+[Composable]
+[Part]
+component AnnotationMarks(ChartCtx c) {
+  variants { base { PointerEvents = PointerEvents.None; } }
+  render {
+    Box(position: Position.Absolute, inset: 0, role: UiRole.List, label: "Annotations") {
+      // The plot's own width, for the note-label side decision below. Nullable on the server, where nothing is
+      // painted yet — the fallback puts labels on the right, which is where most of them belong anyway, and the
+      // client's first pass corrects any that do not fit.
+      var plotW = Layout.Width ?? 600.0;
+
+      foreach (var a in OfKind(c.Annotations, AnnotationKind.Rule)) {
+        var pct = AnnotationPct(a.Value, c.Lo, c.Top);
+        var hue = a.Color != null ? a.Color : "var(--colors-chartnote)";
+        // A rule clamped to the far edge is drawn from the other side. A hairline is a zero-height box's border, and a
+        // border sits outside its box, so a rule pinned at 100% would put its line one pixel above the plot, where
+        // `overflow: Hidden` clips it, and its label wholly above it, clipped too. Anchoring at the top with a bottom
+        // border keeps the same hairline inside the plot.
+        var above = a.Value > c.Top;
+        // The clamp is also shown on the face of the chart, not only in the accessible name. The arrow is the sighted
+        // reader's half of the sentence a screen reader gets ("above the top of this chart"): a clamped line must not
+        // look exactly like a met target.
+        var caption = above ? $"{a.Label} ↑" : (a.Value < c.Lo ? $"{a.Label} ↓" : a.Label);
+        var name = AnnotationLabel(a.Label, a.Value, c.Lo, c.Top, c.Axis);
+        if (c.Horizontal) {
+          if (above) {
+            Box(position: Position.Absolute, top: 0, bottom: 0, right: 0, w: 0,
+                borderRW: 1, borderStyle: BorderStyle.Dashed, border: hue, role: UiRole.ListItem, label: name);
+          } else {
+            Box(position: Position.Absolute, top: 0, bottom: 0, left: $"{pct}%", w: 0,
+                borderLW: 1, borderStyle: BorderStyle.Dashed, border: hue, role: UiRole.ListItem, label: name);
+          }
+          // The caption sits at the TOP of its line, just to the right of it — and shifts by its own width when the
+          // line is clamped to the right edge, which is the only way to keep it inside the plot.
+          if (a.Label != "") {
+            Text(caption, position: Position.Absolute, top: 0, left: above ? "100%" : $"{pct}%",
+                 translateX: above ? "-100%" : "0",
+                 fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: hue, lineHeight: 1,
+                 whiteSpace: WhiteSpace.Nowrap, bg: Colors.ChartSurface, px: 1);
+          }
+        } else {
+          if (above) {
+            Box(position: Position.Absolute, left: 0, right: 0, top: 0, h: 0,
+                borderBW: 1, borderStyle: BorderStyle.Dashed, border: hue, role: UiRole.ListItem, label: name);
+          } else {
+            Box(position: Position.Absolute, left: 0, right: 0, bottom: $"{pct}%", h: 0,
+                borderTW: 1, borderStyle: BorderStyle.Dashed, border: hue, role: UiRole.ListItem, label: name);
+          }
+          // At the right end and just under its own line, so it reads as that line's name rather than as a floating
+          // caption. `bg` is the card surface: without it the dashes run through the text.
+          //
+          // Anchored from the top (`top: 100−pct`) rather than from the bottom, so one expression serves both the
+          // ordinary and the clamped case: at 100% it lands just inside the ceiling instead of wholly above it.
+          if (a.Label != "") {
+            Text(caption, position: Position.Absolute, right: 0, top: $"{100.0 - pct}%",
+                 fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: hue, lineHeight: 1,
+                 whiteSpace: WhiteSpace.Nowrap, bg: Colors.ChartSurface, px: 1);
+          }
+        }
+      }
+
+      foreach (var a in OfKind(c.Annotations, AnnotationKind.Note)) {
+        var idx = CategoryIndex(c.Labels, a.Category);
+        var pct = AnnotationPct(a.Value, c.Lo, c.Top);
+        var slot = SlotPct(idx, c.Labels.Length);
+        var hue = a.Color != null ? a.Color : "var(--colors-chartnote)";
+        // The label picks its side by measurement: right of the dot unless it would not fit there. Whether it fits
+        // depends on this string in this plot, not on the category index: "v2 launch" and "Q3 reforecast complete" need
+        // different room at the same position. `+ 14` is the dot and its gap.
+        var textW = Layout.TextWidth(a.Label) ?? (double)a.Label.Length * 6.5;
+        var fitsRight = slot * plotW / 100.0 + textW + 14.0 <= plotW;
+        if (idx >= 0) {
+          NoteDot_(left: $"{slot}%", bottom: $"{pct}%", color: hue,
+                   label: AnnotationLabel(a.Label, a.Value, c.Lo, c.Top, c.Axis));
+          NoteLabel_(left: $"{slot}%", bottom: $"{pct}%", text: a.Label, color: hue, toRight: fitsRight);
+        } else {
+          // A note naming a category this chart does not have. Categories are runtime data, so this cannot be a compile
+          // error, and it must not be dropped silently: the author would see a chart that renders perfectly but is
+          // missing what they asked for. So the chart says so, like "No data to plot".
+          Text($"⚠ note \"{a.Label}\" names a category this chart does not have: \"{a.Category}\"",
+               position: Position.Absolute, left: 0, top: 0, fontSize: FontSize.ChartTick, color: Colors.ChartDown, lineHeight: 1,
+               bg: Colors.ChartSurface, px: 1);
+        }
+      }
+    }
+  }
+}
+
+/// The dot of a `Note`, centred exactly on its point.
+///
+/// The translate is static and therefore a variant; the position is per-note and therefore a prop — the same split
+/// `TickLabel_` documents. A surface ring keeps the dot readable where it lands on top of a column of its own hue.
+[AllowAnonymous]
+[Composable]
+[Part]
+component NoteDot_(string left, string bottom, string color, string label) {
+  variants { base { TranslateX = "-50%"; TranslateY = "50%"; } }
+  render {
+    Box(position: Position.Absolute, left: left, bottom: bottom, w: 9, h: 9, rounded: 6,
+        bg: color, borderW: 2, border: Colors.ChartSurface, role: UiRole.ListItem, label: label);
+  }
+}
+
+/// The caption of a `Note`, on whichever side of the dot it fits.
+///
+/// The side is an inline conditional, not a variants dimension. A dimension is keyed by an enum-typed parameter, so
+/// it would need a `NoteSide { Left, Right }` enum for a two-way choice no author ever writes. The vertical `-50%`
+/// recentre stays in `variants` because it is static; only the horizontal shift depends on the measurement.
+///
+/// The two sides are not mirror images. To the right the box starts 9px past the point; to the left it must end 9px
+/// before it, which is its own width away, a distance only the browser knows, hence `calc(-100% …)`.
+[AllowAnonymous]
+[Composable]
+[Part]
+component NoteLabel_(string left, string bottom, string text, string color, bool toRight) {
+  variants { base { TranslateY = "50%"; } }
+  render {
+    // `Nowrap` is required. An absolutely positioned Text shrink-wraps, so a two-word caption such as "Quarter close"
+    // would break over two lines when placed on the left, and read as two captions.
+    Text(text, position: Position.Absolute, left: left, bottom: bottom,
+         translateX: toRight ? "9px" : "calc(-100% - 9px)", whiteSpace: WhiteSpace.Nowrap,
+         fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: color, lineHeight: 1, bg: Colors.ChartSurface, px: 1);
+  }
+}

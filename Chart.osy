@@ -1,0 +1,377 @@
+namespace Osysharp.Charts;
+
+// ── the components ───────────────────────────────────────────────────────────────────────────────────────
+
+/// A chart.
+///
+///     Chart(title: "Revenue", labels: months) {
+///       Column(label: "2024", values: last);
+///       Line(label: "2025", values: current);
+///       Axis(side: Left);
+///     }
+///
+/// Everything below the title is derived: the value scale spans every mark, the ticks land on round numbers, the
+/// legend appears when there are two or more series (one series needs none — the title already names it), and the
+/// whole thing re-lays itself when the container resizes.
+[AllowAnonymous]
+[Composable]
+component Chart(
+  string title = "",
+  string subtitle = "",
+  string[] labels = [],
+  Mark[] marks = [],
+  AxisDef[] axes = [],
+  LegendDef[] legends = [],
+  // Reference lines, bands and labelled points — see `Annotation`. Written as children, like a mark or an axis.
+  Annotation[] annotations = [],
+  // The same data as rows — `Table()` below the chart, or `Table(position: TablePos.Instead)` in place of it.
+  TableDef[] tables = [],
+  int height = 260,
+  // `Bare` strips everything that is not a mark — the sparkline. See `ChartChrome`; a title given with it becomes
+  // the accessible name rather than being silently dropped.
+  ChartChrome chrome = ChartChrome.Card,
+  // Values printed on the marks themselves. Off by default: a number on every point is noise and goes unread. Turn
+  // it on for a short series where the values are the story; otherwise the axis carries them.
+  bool showValues = false,
+  // Stack the bar series instead of grouping them side by side.
+  //
+  // Stacked and grouped answer different questions, which is why this is a choice. Grouped compares series at a
+  // category ("was March better than February for each region?"); stacked compares the total across categories and
+  // shows its composition ("how did total revenue move, and who made it up?"). In a stack, every series except the
+  // bottom one is hard to compare between categories because none of them shares a baseline, which is why grouped is
+  // the default.
+  //
+  // Applies to `Column` and `Bar` series only. A `Line` or `Area` on the same chart keeps its own baseline.
+  bool stacked = false)
+{
+  // The card is a variants dimension, so `chrome: Bare` removes it rather than painting over it. `Bare` sets no
+  // surface, hairline, radius or padding: a sparkline sits in whatever box it is given, and 5 steps of padding inside
+  // a 28px-high glyph would be most of the glyph.
+  variants {
+    base { Color = Colors.ChartInk; }
+    chrome {
+      Card { Bg = Colors.ChartSurface; Rounded = 10; BorderW = 1; Border = Colors.ChartBorder; P = 5; }
+      Bare { P = 0; }
+    }
+  }
+
+  live var bare = chrome == ChartChrome.Bare;
+
+  // Which series are switched off. Plain component state, flipped by an action, the same mechanism a form field
+  // uses; the chart derives everything else from it.
+  string[] hidden = [];
+
+  action ToggleSeries(string label) { hidden = Toggled(hidden, label); }
+
+  // One point of definition for "bare has no legend": forcing the position means the legend component, its
+  // interactive toggle and the four placements all follow, with no `!bare` check to forget in one of them.
+  live var legend = bare ? new LegendDef { Position = LegendPos.None } : LegendOf(legends);
+  live var horizontal = IsHorizontal(marks);
+  // The value axis is found by side, not by position. `axes[0]` would only be right while the author happens to write
+  // the value axis first: with `Axis(side: Bottom); Axis(side: Left, ticks: 8);` the 8 would go to the bottom axis.
+  // `ValueAxisOf` also returns a default when none is declared, so every reader below can ask for
+  // `vaxis.Format`/`.Ticks`/`.Grid` without first checking whether there is an axis at all.
+  live var vaxis = ValueAxisOf(axes, horizontal);
+  live var tickCount = vaxis.Ticks;
+  // One scale, derived once and read by every layer: the axis, the gridlines and the marks cannot disagree about
+  // where a value sits.
+  //
+  // A declared Min/Max pins the domain; null derives it from the data, which is the default and nearly always right.
+  // The scale is over the visible series, which is what makes toggling worth having: switch off the tallest and the
+  // rest expand to fill the plot instead of huddling at the bottom of a scale set by something no longer on screen.
+  // Colours do not follow: a series keeps its palette slot whether it is showing or not (`SlotOf` is asked over the
+  // full mark list), so hiding series 2 does not repaint series 3 to 8.
+  live var visible = VisibleMarks(marks, hidden);
+  live var lo = FloorOf(visible, vaxis.Min);
+  live var rawHi = vaxis.Max != null ? (double)vaxis.Max
+                                     : (stacked ? MaxStackedOf(visible) : MaxOf(visible));
+  // A pinned top is honoured exactly: rounding it up to a nicer number would overrule the one number the author
+  // stated. Unpinned, the top is the highest round tick, so the tallest mark meets a gridline.
+  live var top = vaxis.Max != null ? (double)vaxis.Max : ScaleTop(lo, rawHi, tickCount);
+  live var ticks = vaxis.Max != null ? TicksBetween(lo, top, tickCount) : TicksOf(lo, rawHi, tickCount);
+  live var showGrid = vaxis.Grid && !bare;
+  // Which strips are drawn. The VALUE axis is on the orientation's value side and is drawn unless the author
+  // declared axes and left that side out; the CATEGORY strip is drawn whenever there are labels to put in it.
+  live var hasValueAxis = !bare && (axes.Length == 0 || AnySide(axes, horizontal ? AxisSide.Bottom : AxisSide.Left));
+  live var hasCategoryAxis = !bare && labels.Length > 0;
+  live var hasTable = tables.Length > 0;
+  // `Instead` replaces the picture; `Below` (the default) sits under it. One declared table wins — a chart with two
+  // `Table()` children is asking two different questions and the first one written is the answer.
+  live var tableInstead = tables.Length > 0 && tables[0].Position == TablePos.Instead;
+
+  // Everything worked out above, in one value (see `ChartCtx`). Built here because this is the only component that
+  // knows all of it; every piece below is handed the result rather than each ingredient.
+  live var ctx = new ChartCtx {
+    Marks = marks, Labels = labels, Hidden = hidden, Annotations = annotations, Axis = vaxis,
+    Lo = lo, Top = top, Ticks = ticks, Height = height,
+    Horizontal = horizontal, Stacked = stacked, ShowGrid = showGrid, ShowValues = showValues, Bare = bare,
+    HasValueAxis = hasValueAxis, HasCategoryAxis = hasCategoryAxis,
+  };
+
+  render {
+    Stack(gap: 4, role: UiRole.Group, label: title != "" ? title : "Chart") {
+      // A bare chart's title is not dropped: the `role: UiRole.Group, label: title` on the Stack above carries it, so a
+      // sparkline still announces itself to a screen reader while drawing no heading.
+      if (!bare && (title != "" || subtitle != "")) {
+        Stack(gap: 1) {
+          if (title != "") { Text(title, fontSize: FontSize.ChartTitle, fontWeight: FontWeight.ChartStrong, color: Colors.ChartInk); }
+          if (subtitle != "") { Text(subtitle, fontSize: FontSize.ChartLabel, color: Colors.ChartMuted); }
+        }
+      }
+
+      if (marks.Length == 0) {
+        // An empty chart says so. A blank plot frame reads as "loading" forever.
+        Row(h: height, align: Align.Center, justify: Justify.Center) {
+          Text("No data to plot", fontSize: FontSize.ChartLabel, color: Colors.ChartMuted);
+        }
+      } else {
+        // The legend can sit on any edge, so the chart body is one component and the four arrangements are four ways of
+        // placing it. Repeating the body per position would let the arrangements drift apart.
+        //
+        // A `Table(position: TablePos.Instead)` replaces the picture, including its legend. A legend is a key to marks
+        // that are not being drawn: its swatches would name colours nothing on screen uses, and its toggle would hide a
+        // series from a table that has its own column headers.
+        if (!tableInstead) {
+        if (legend.Position == LegendPos.Top) { ChartLegend(c: ctx, legend: legend, vertical: false, onToggle: ToggleSeries); }
+        if (legend.Position == LegendPos.Left || legend.Position == LegendPos.Right) {
+          Row(gap: 4, align: Align.Center) {
+            if (legend.Position == LegendPos.Left) { ChartLegend(c: ctx, legend: legend, vertical: true, onToggle: ToggleSeries); }
+            Stack(grow: 1) {
+              ChartBody(c: ctx);
+            }
+            if (legend.Position == LegendPos.Right) { ChartLegend(c: ctx, legend: legend, vertical: true, onToggle: ToggleSeries); }
+          }
+        } else {
+          ChartBody(c: ctx);
+        }
+        if (legend.Position == LegendPos.Bottom) { ChartLegend(c: ctx, legend: legend, vertical: false, onToggle: ToggleSeries); }
+        }
+        if (hasTable) { ChartTable(c: ctx, caption: title != "" ? title : "Chart data"); }
+      }
+
+    }
+  }
+}
+
+/// The chart body: the axis strips and the plot between them, in whichever orientation the marks chose.
+///
+/// A component rather than a block repeated per legend position, so the four legend placements cannot drift apart.
+[AllowAnonymous]
+[Composable]
+[Part]
+component ChartBody(ChartCtx c) {
+  render {
+    // D-RTL1 — THE PLOT KEEPS ITS GEOMETRY: its marks are drawn in coordinates that run left to right (a `Path`, a
+    // canvas), so the body — axes, plot, ticks — is one left-to-right island on an Arabic page, the physical escape
+    // `FlowDirection` exists for. The title, the legend and the table around it follow the page.
+    Stack(gap: 2, flowDirection: FlowDirection.LeftToRight) {
+        // The axis title lives here, above the row, not inside the axis column. Inside the column it would push the
+        // tick labels down by its own height while the plot beside them stays put, so every tick label would sit below
+        // the gridline it names.
+        //
+        // A horizontal chart's value axis runs along the bottom, so its title goes under it: the same rule (put the
+        // title where the axis is), reflected.
+        if (c.HasValueAxis && c.Axis.Title != "" && !c.Horizontal) {
+          Row(gap: 2) {
+            // The alignment is on the box, and it has to be. A `Text` renders as an inline `<span>`, so the ways of
+            // saying "right-align this" written on the Text itself compile but have no effect:
+            //   `align: End`      lowers to `align-items`, which only a flex container reads, and a span is not one.
+            //   `textAlign: End`  is the right property on the wrong element: text-align aligns the inline content of a
+            //                     block, and a span is not a block.
+            //   `w: "100%"`       does nothing to an inline element.
+            // The gutter exists to line this title up with the tick column beneath it, so it must be right-aligned.
+            Box(w: 52, shrink: 0, textAlign: TextAlign.End) {
+              Text(c.Axis.Title, fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: Colors.ChartMuted);
+            }
+          }
+        }
+        if (c.Horizontal) {
+          // The transpose: categories down the left, values along the bottom, gridlines standing up. Every piece is the
+          // vertical chart's piece with its axes swapped: one layout, reflected, rather than a second chart
+          // implementation that could drift from the first.
+          Row(gap: 2, align: Align.Stretch) {
+            if (c.HasCategoryAxis) { CategoryAxisV(labels: c.Labels, height: c.Height); }
+            Stack(gap: 2, grow: 1) {
+              Plot(c: c);
+              if (c.HasValueAxis) { ValueAxisH(ticks: c.Ticks, axis: c.Axis); }
+              if (c.HasValueAxis && c.Axis.Title != "") {
+                // `justify: Center` on the ROW, not `align: Center` on the Text: a Text is shrink-to-fit, so
+                // centring its own contents centres nothing. The row is what has the width.
+                Row(justify: Justify.Center) {
+                  Text(c.Axis.Title, fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: Colors.ChartMuted);
+                }
+              }
+            }
+          }
+        } else {
+          Row(gap: 2, align: Align.Stretch) {
+            if (c.HasValueAxis) { ValueAxis(ticks: c.Ticks, height: c.Height, axis: c.Axis); }
+            Stack(gap: 2, grow: 1) {
+              Plot(c: c);
+              if (c.HasCategoryAxis) { CategoryAxis(labels: c.Labels); }
+            }
+          }
+        }
+    }
+  }
+}
+
+/// The legend, if this chart has one and has more than one series to name.
+///
+/// A single series needs no legend — the title already names it, and a box with one swatch restates it and costs
+/// space. `LegendPos.None` suppresses it outright.
+[AllowAnonymous]
+[Composable]
+[Part]
+component ChartLegend(ChartCtx c, LegendDef legend, bool vertical, Action<string> onToggle) {
+  render {
+    if (c.Marks.Length > 1 && legend.Position != LegendPos.None) {
+      SeriesLegend(marks: c.Marks, hidden: c.Hidden, interactive: legend.Interactive, vertical: vertical, onToggle: onToggle);
+    }
+  }
+}
+
+/// True when any declared axis sits on this side.
+bool AnySide(AxisDef[] axes, AxisSide side) { return axes.Any(a => a.Side == side); }
+
+/// The value axis — the round numbers down the left edge.
+///
+/// Right-aligned and `tabular-nums`, because these ARE a column of numbers: proportional digits make `121` and `999`
+/// different widths and the column stops reading as a column.
+[AllowAnonymous]
+[Composable]
+[Part]
+component ValueAxis(double[] ticks, int height, AxisDef axis) {
+  render {
+    Stack(shrink: 0) {
+      // Labels are positioned absolutely, at the same fractions the gridlines use, rather than distributed with
+      // `justify: Between`. Between distributes the label boxes: the first box's top sits at 0, so its text centre sits
+      // half a line-height below the gridline it names, and the last sits half a line-height above. A bar reaching 91%
+      // of the scale can then look as if it crossed the top tick, and an axis that disagrees with its own gridlines
+      // makes every number on the chart suspect.
+      Box(position: Position.Relative, h: height, w: 52, shrink: 0) {
+        foreach (var i in Enumerable.Range(0, ticks.Length)) {
+          TickLabel_(text: Formatted(ticks[i], axis), top: $"{TickPct(i, ticks.Length)}%");
+        }
+      }
+    }
+  }
+}
+
+/// Where tick `i` of `n` sits down the axis, as a percentage — the SAME fractions `justify: Justify.Between` puts the
+/// gridlines at, so the two cannot drift.
+double TickPct(int i, int n) {
+  if (n <= 1) { return 0.0; }
+  return (double)i * 100.0 / (double)(n - 1);
+}
+
+/// One tick label, centred ON its gridline rather than hanging below it.
+///
+/// The `-50%` translate does the centring and is a variant because it is static; the offset is per tick and
+/// therefore an element prop. `variants` hold what every instance shares, props hold what this instance is.
+[AllowAnonymous]
+[Composable]
+[Part]
+component TickLabel_(string text, string top) {
+  variants { base { TranslateY = "-50%"; } }
+  render {
+    // `TabularNums` because this IS a column of numbers: proportional digits make `121` and `999` different widths
+    // and the column stops reading as a column.
+    Text(text, fontSize: FontSize.ChartTick, color: Colors.ChartMuted, lineHeight: 1, fontVariant: FontVariant.TabularNums,
+         position: Position.Absolute, right: 0, top: top);
+  }
+}
+
+/// The VALUE axis of a horizontal chart — the round numbers along the bottom.
+///
+/// Absolute at the same fractions the vertical gridlines use, for the same reason its vertical twin is: distributing
+/// label BOXES with `Between` puts the first label's CENTRE half its own width to the right of the line it
+/// names, and the last half a width to the left. The error is largest at the ends, which is where a reader checks.
+[AllowAnonymous]
+[Composable]
+[Part]
+component ValueAxisH(double[] ticks, AxisDef axis) {
+  render {
+    Box(position: Position.Relative, w: "100%", h: 16) {
+      foreach (var i in Enumerable.Range(0, ticks.Length)) {
+        TickLabelH_(text: Formatted(Ascending(ticks)[i], axis), left: $"{TickPct(i, ticks.Length)}%");
+      }
+    }
+  }
+}
+
+/// One tick label on a horizontal axis, centred ON its gridline rather than beside it.
+[AllowAnonymous]
+[Composable]
+[Part]
+component TickLabelH_(string text, string left) {
+  variants { base { TranslateX = "-50%"; } }
+  render {
+    Text(text, fontSize: FontSize.ChartTick, color: Colors.ChartMuted, lineHeight: 1, position: Position.Absolute, top: 2, left: left);
+  }
+}
+
+/// The CATEGORY axis of a horizontal chart — the names down the left, each aligned with its own bar row.
+///
+/// Right-aligned against the plot so the names end where the bars begin: a ragged right edge here would make every
+/// bar look as if it started somewhere different.
+[AllowAnonymous]
+[Composable]
+[Part]
+component CategoryAxisV(string[] labels, int height) {
+  render {
+    Stack(w: 84, shrink: 0, h: height, gap: 2) {
+      foreach (var l in labels) {
+        // The row's `justify: Justify.End` right-aligns these. `align: Align.End` on the Text itself has no effect; see
+        // the axis title above for why.
+        Row(grow: 1, basis: 0, align: Align.Center, justify: Justify.End) {
+          Text(l, fontSize: FontSize.ChartTick, color: Colors.ChartMuted);
+        }
+      }
+    }
+  }
+}
+
+/// The category axis — the labels under the plot, each centred on the slot it names.
+///
+/// Absolutely positioned at the slot centres, the same technique `ValueAxis` uses, so that a label cannot move the
+/// grid it describes. A row of `grow: 1` boxes with the text inside each would not work: a flex item will not shrink
+/// below its own content (`min-width: auto`), so a slot carrying a label would be wider than an empty one and its
+/// neighbours would shift. The drift grows with the category count, so it is invisible at six categories and
+/// visible at sixty.
+///
+/// It draws as many labels as fit, no more. Six months want six labels; sixty daily closes want about eight, and
+/// drawing sixty turns the axis into a grey smear. The count is measured with `Layout.TextWidth` against the font
+/// this axis paints with and the width each category gets, so the same axis is right at 400px and at 1400px, and for
+/// "Jan" and for "Enterprise renewals", with nothing declared by the author.
+[AllowAnonymous]
+[Composable]
+[Part]
+component CategoryAxis(string[] labels) {
+  render {
+    // Both measurements are nullable and both fall back: the server has no font and no box, so it paints every label
+    // and the client thins them on its first pass. An axis that rendered nothing until measured would flash empty on
+    // every page load.
+    //
+    // This folds over every label's measured width. Character count is not a usable stand-in: "IIII" and "WWWW" have
+    // the same length and are nearly a factor of two apart in painted width.
+    var widest = WidestLabel(labels);
+    var step = LabelStep(widest, (Layout.Width ?? 600.0) / (double)labels.Length);
+    Box(position: Position.Relative, w: "100%", h: 16) {
+      foreach (var i in Enumerable.Range(0, labels.Length)) {
+        if (i % step == 0) { TickLabelH_(text: labels[i], left: $"{SlotPct(i, labels.Length)}%"); }
+      }
+    }
+  }
+}
+
+/// Where slot `i` of `n` has its CENTRE, as a percentage of the axis.
+///
+/// Not `TickPct`: a tick is a position on a continuous scale, so ticks sit at the ends (`i/(n-1)`, first at 0% and
+/// last at 100%). A category owns a slot, so its label belongs at that slot's middle (`(i + 0.5)/n`), which is where
+/// `PointsOf` puts its point and where a column's box is centred. The tick formula would pin the first label to the
+/// left edge of the plot, half a slot from the mark it names.
+double SlotPct(int i, int n) {
+  if (n <= 0) { return 0.0; }
+  return ((double)i + 0.5) * 100.0 / (double)n;
+}
