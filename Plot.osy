@@ -180,10 +180,10 @@ component Columns(Mark m, double lo, double top, string color, bool showValues, 
         // With one column series this is a single sub-slot, so the common case pays nothing for grouping.
         Row(grow: 1, basis: 0, h: "100%", align: Align.End, justify: Justify.Center, gap: 1) {
           foreach (var s in Enumerable.Range(0, count)) {
-            // ⭐ THE SLOT IS SPLIT AT THE ZERO LINE (ledger #chart-negative-bars): everything above it is the region a
+            // ⭐ THE SLOT IS SPLIT AT THE ZERO LINE: everything above it is the region a
             //   positive value grows UP through, everything below it the region a negative value grows DOWN through.
             //   With no negative value on the chart `ZeroPct` is 0, the lower region is zero-tall, and this lays out
-            //   exactly as the single region it replaces.
+            //   exactly as a single region.
             //
             //   A clamp is what this replaces, and a clamp is the worst of the options: `PercentOf` answered 0 for a
             //   negative value, so the bar was PRESENT, accessible, correctly labelled — and zero pixels tall.

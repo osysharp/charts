@@ -237,8 +237,8 @@ its share, because reading either off the angles is exactly what a reader cannot
 - **Every mark is an element or a `Path`.** A column is a `Box`; hover, focus, click and `aria-label` come from the
   DOM, so a keyboard user can traverse a bar chart with nothing written for them. That is most of what makes a
   canvas charting library large, and none of it is re-implemented here.
-- **Two column series GROUP** — they share each category slot, divided by `grow: 1` rather than arithmetic. They used
-  to overlay, which does not read as "overlapping": it reads as a stacked bar, with the apparent total being the
+- **Two column series GROUP** — they share each category slot, divided by `grow: 1` rather than arithmetic. Overlaid,
+  they would not read as "overlapping": they would read as a stacked bar, with the apparent total being the
   taller series and the shorter one invisible wherever it lost.
 - **Lines and areas need no measurement.** They are drawn in a nominal 1000-unit space with `Path(stretch: true)`,
   so the browser maps the viewBox onto whatever box the plot gets. A resize costs no re-render and no observer, and
@@ -259,7 +259,7 @@ its share, because reading either off the angles is exactly what a reader cannot
   purpose: the parameter is the visible statement of what each piece depends on.
 - **`Mark.Kind` is an enum, and `IsBarKind` has no `_` arm.** Every question about a mark's kind funnels through
   that one switch expression, so a sixth kind fails the build at the site that must decide about it. While `Kind`
-  were a string, adding a kind would be a search, and a missed site would draw wrong silently.
+  were a string, adding a kind would be a search, and a missed site would draw wrong silently — which is why it is not.
 - **…and yet `CandleMark : Mark` is a SUBTYPE, which is not a contradiction — it is two different questions.**
   `Kind` answers *how does this draw*, and an enum is right for it: a `Column` and a `Bar` hold identical data and
   differ only in which way the chart is turned, so subtypes there would be five near-empty classes replacing a

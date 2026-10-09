@@ -150,10 +150,9 @@ double MinOf(Mark[] marks) {
   }
   // ⭐ THE SAME RULE FOR EVERY NON-CANDLE MARK: the lowest value when it is below zero, and zero otherwise.
   //
-  // It used to answer a flat `0.0` as soon as a bar or an area was present, and that is what drew a NEGATIVE value as
-  // a zero-height bar — silently, on a chart that otherwise looked right (ledger #chart-negative-bars). The rule this
-  // replaces it with keeps the property the old one was protecting: a floor of `min(0, …)` can only ever EXTEND the
-  // axis downward, never lift it above zero, so a bar is still read by its full length from zero and the chart still
+  // A flat `0.0` whenever a bar or an area is present would draw a NEGATIVE value as a zero-height bar — silently, on
+  // a chart that otherwise looks right. This rule keeps what a zero floor protects: a floor of `min(0, …)` can only
+  // ever EXTEND the axis downward, never lift it above zero, so a bar is still read by its full length from zero and the chart still
   // cannot exaggerate a small difference by cropping the baseline.
   var lo2 = 0.0;
   foreach (var m in marks) {
@@ -276,10 +275,10 @@ string TickLabel(double v) {
 /// An empty `Format` is the compact default (`1.5K`), which no .NET specifier produces; anything else is handed to
 /// the formatter exactly as C# would hand it over.
 string Formatted(double v, AxisDef axis) {
-  // ⭐ THE SIGN GOES OUTSIDE THE PREFIX (ledger #chart-negative-prefix). Composed as `Prefix + body`, a negative on a
-  //   currency axis read `£-8,000`, where C# — and every finance UI a reader has seen — writes `-£8,000`. It is one
-  //   formatter, so the wrong spelling reached the ticks, the hover readout, the data table, the on-mark values and
-  //   every mark's accessible name at once; fixing it here fixes all of them, which is why they share it.
+  // ⭐ THE SIGN GOES OUTSIDE THE PREFIX. Composed as `Prefix + body`, a negative on a currency axis would read
+  //   `£-8,000`, where C# — and every finance UI a reader has seen — writes `-£8,000`. It is one formatter, shared by
+  //   the ticks, the hover readout, the data table, the on-mark values and every mark's accessible name, so all of them
+  //   spell it the same way.
   //
   //   The MAGNITUDE is formatted and the sign put back in front, rather than string-patching the result: a format
   //   specifier may place the sign anywhere (or in brackets), and rewriting its output would be guessing at it.

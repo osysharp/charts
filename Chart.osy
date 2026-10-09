@@ -161,7 +161,7 @@ component Chart(
 [Part]
 component ChartBody(ChartCtx c) {
   render {
-    // D-RTL1 — THE PLOT KEEPS ITS GEOMETRY: its marks are drawn in coordinates that run left to right (a `Path`, a
+    // THE PLOT KEEPS ITS GEOMETRY: its marks are drawn in coordinates that run left to right (a `Path`, a
     // canvas), so the body — axes, plot, ticks — is one left-to-right island on an Arabic page, the physical escape
     // `FlowDirection` exists for. The title, the legend and the table around it follow the page.
     Stack(gap: 2, flowDirection: FlowDirection.LeftToRight) {
