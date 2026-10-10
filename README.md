@@ -37,16 +37,16 @@ using Osysharp.Charts;
 Chart(title: "Revenue against target", subtitle: "First half", labels: months) {
   Column(label: "Revenue", values: revenue);
   Line(label: "Target", values: target);
-  Axis(side: Left);
+  Axis(side: AxisSide.Left);
 }
 ```
 
 The marks are written as CHILDREN — they are config records, so the call site reads as the picture being described
 rather than as an array being assembled. Giving the chart `labels` is what asks for a category axis; you rarely
-declare `Axis(side: Bottom)`.
+declare `Axis(side: AxisSide.Bottom)`.
 
-A bare enum member is the spelling here (`side: Left`), exactly as in any other component call — `AxisSide.Left`
-also works and is what you would write in C#.
+An enum member is written qualified — `side: AxisSide.Left` — exactly as in any other component call and in C#; a bare
+`side: Left` is refused, naming the spelling that works.
 
 ## What it does
 
@@ -97,7 +97,7 @@ Chart(title: "Revenue against target", labels: months) {
   Band(from: 55000.0, to: 65000.0, label: "Acceptable");
   Rule(value: 60000.0, label: "Target");
   Note(category: "May", value: 73000.0, label: "v2 launch");
-  Axis(side: Left);
+  Axis(side: AxisSide.Left);
 }
 ```
 
@@ -130,7 +130,7 @@ The same data as rows, below the chart or instead of it:
 Chart(title: "Revenue and refunds", labels: months) {
   Column(label: "Revenue", values: revenue);
   Line(label: "Refunds", values: refunds);
-  Axis(side: Left, format: "N0", prefix: "£");
+  Axis(side: AxisSide.Left, format: "N0", prefix: "£");
   Table();                          // …or Table(position: Instead)
 }
 ```

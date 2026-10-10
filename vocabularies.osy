@@ -65,7 +65,7 @@ public class CandleMark : Mark {
   public double[] Lows;
 }
 
-/// Which edge an axis sits on. A closed vocabulary rather than a string, so `Axis(side: Left)` is checked and
+/// Which edge an axis sits on. A closed vocabulary rather than a string, so `Axis(side: AxisSide.Left)` is checked and
 /// completable — the same discipline `align: Align.Center` follows.
 public enum AxisSide { Left, Bottom }
 
@@ -191,7 +191,7 @@ public class AxisDef {
 //     Chart(title: "Revenue", labels: months) {
 //       Column(label: "2024", values: last);
 //       Line(label: "2025", values: current);
-//       Axis(side: Left);
+//       Axis(side: AxisSide.Left);
 //     }
 
 /// A connected line through the values. The default mark: it is what a time series is.
@@ -212,8 +212,8 @@ public class AxisDef {
 /// run down the left and the gridlines stand vertical, so a `Bar` and a `Column` in one chart would need two
 /// coordinate systems at once. The kit treats the chart as horizontal as soon as any mark is a `Bar`.
 ///
-/// The axis follows the orientation: in a horizontal chart `Axis(side: Bottom)` is the VALUE axis (format, min/max,
-/// ticks, title) and `Axis(side: Left)` names the categories — exactly the other way round from a column chart, and
+/// The axis follows the orientation: in a horizontal chart `Axis(side: AxisSide.Bottom)` is the VALUE axis (format, min/max,
+/// ticks, title) and `Axis(side: AxisSide.Left)` names the categories — exactly the other way round from a column chart, and
 /// exactly where each one is on the screen.
 [AllowAnonymous] component Bar(string label, double[] values, string? color = null, MarkKind kind = MarkKind.Bar) : Mark;
 
@@ -312,7 +312,7 @@ public class TableDef {
 [AllowAnonymous] component Note(string category, double value, string label, string? color = null,
                                 AnnotationKind kind = AnnotationKind.Note) : Annotation;
 
-/// An axis. `Axis(side: Left)` is the value axis; `Axis(side: Bottom)` names the categories.
+/// An axis. `Axis(side: AxisSide.Left)` is the value axis; `Axis(side: AxisSide.Bottom)` names the categories.
 [AllowAnonymous] component Axis(AxisSide side = AxisSide.Left, bool grid = true, int ticks = 4,
                                 string title = "", string format = "",
                                 string prefix = "", string suffix = "",

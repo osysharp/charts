@@ -7,7 +7,7 @@ namespace Osysharp.Charts;
 ///     Chart(title: "Revenue", labels: months) {
 ///       Column(label: "2024", values: last);
 ///       Line(label: "2025", values: current);
-///       Axis(side: Left);
+///       Axis(side: AxisSide.Left);
 ///     }
 ///
 /// Everything below the title is derived: the value scale spans every mark, the ticks land on round numbers, the
@@ -68,7 +68,7 @@ component Chart(
   live var legend = bare ? new LegendDef { Position = LegendPos.None } : LegendOf(legends);
   live var horizontal = IsHorizontal(marks);
   // The value axis is found by side, not by position. `axes[0]` would only be right while the author happens to write
-  // the value axis first: with `Axis(side: Bottom); Axis(side: Left, ticks: 8);` the 8 would go to the bottom axis.
+  // the value axis first: with `Axis(side: AxisSide.Bottom); Axis(side: AxisSide.Left, ticks: 8);` the 8 would go to the bottom axis.
   // `ValueAxisOf` also returns a default when none is declared, so every reader below can ask for
   // `vaxis.Format`/`.Ticks`/`.Grid` without first checking whether there is an axis at all.
   live var vaxis = ValueAxisOf(axes, horizontal);
