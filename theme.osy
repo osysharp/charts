@@ -8,83 +8,81 @@
 // library. Here each mark is a DOM element with a role and an accessible name, so hover and screen-reader semantics
 // come from the browser. `Path` covers the shapes elements cannot express (a line, an area).
 //
-// The palette is computed, not chosen. The eight series hues are validated for colour-vision-deficiency (CVD)
-// separation, a lightness band, a chroma floor and surface contrast, in both light and dark mode: worst adjacent CVD
-// ΔE 9.1 light / 8.4 dark against a target of 8, worst normal-vision ΔE 19.6 / 19.3 against a floor of 15. They are
-// assigned in a fixed order and never cycled: a ninth series gets no new hue, it is a signal to group.
+// Its colours are the theme's: the card, the ink and the gridlines are the app's surface and text tones, and the
+// series lead with the app's accent, then continue with eight hues validated for colour-vision-deficiency separation,
+// skipping any too close to the accent. They are assigned in a fixed order and never cycled: a ninth series gets no
+// new hue, it is a signal to group.
 
 namespace Osysharp.Charts;
 
 // ── the design tokens ────────────────────────────────────────────────────────────────────────────────────
 //
-// A theme rather than hard-coded hex values: an app re-themes the chart by shadowing a token
-// (`Colors { Series1 = "#…"; }`), dark mode is a property of the token rather than a branch in the chart, and
-// `osy lint`'s raw-literal rule stays satisfied inside the kit itself.
-//
-// In dark mode the same eight hues are re-stepped for a dark surface rather than flipped automatically: a hue that
-// clears contrast on white does not on near-black, and inverting lightness would break the CVD separation the order
-// was selected for.
+// A chart FOLLOWS THE THEME IT IS DRAWN IN. Its card, ink, gridlines and readout are the theme's own surface, text and
+// rule colours, and its first series is the theme's accent, so a chart in an app — whatever look or theme the app
+// wears — looks like part of the page it sits on, in light and dark, without the app writing a line for it. Every
+// token is still the app's to shadow (`Colors { Series2 = "#…"; ChartGrid = Colors.Border; }`), and the app's value
+// wins wherever the kit reads it.
 theme Charts {
   Colors {
-    // Each series is a generated ramp, not a flat hex. `Palette.From` fans one seed colour out into an 11-step
-    // perceptual OKLCH scale (50…950) plus semantic aliases, so a series has a wash for an area fill (`Series1.Muted`),
-    // a hover step and a contrast foreground, all derived from the one validated colour.
+    // ⭐ THE SERIES LEAD WITH THE ACCENT, then continue with eight fixed hues, in an order chosen for
+    //    colour-vision-deficiency separation. `Palette.Series` drops every hue too close to the accent to be told apart
+    //    from it (in light OR dark mode, so a series is one hue in both), so an orange accent does not sit beside the
+    //    orange series and a violet one beside the violet. Which hues those are depends on the accent, and the accent
+    //    is the app's, so the compile chooses — measured on the five app looks, every one collided with one or two of
+    //    the eight. Past the last hue a series keeps the last one: a ninth series is a signal to group, not a new hue.
     //
-    // `Palette.From` keeps the seed verbatim as the ramp's base, so the mark colour on screen is exactly the hue the
-    // CVD separation was measured on. The ramp holds hue constant and moves only lightness and chroma, so every derived
-    // step is the same series, lighter or darker.
-    Series1 = Palette.From("#2a78d6");   // blue
-    Series2 = Palette.From("#eb6834");   // orange
-    Series3 = Palette.From("#1baf7a");   // aqua
-    Series4 = Palette.From("#eda100");   // yellow
-    Series5 = Palette.From("#e87ba4");   // magenta
-    Series6 = Palette.From("#008300");   // green
-    Series7 = Palette.From("#4a3aa7");   // violet
-    Series8 = Palette.From("#e34948");   // red
-    // The chart's own furniture, recessive by construction: a gridline is one step off the surface, never a mid-grey
-    // rule competing with the data. `ChartInk`/`ChartMuted` are text tiers. A label never wears a series colour,
-    // because a light categorical hue (yellow, aqua) is illegible as text; identity belongs to the swatch beside the
-    // text. These are light/dark pairs rather than ramps: each is a single value whose job is to flip with the surface.
-    ChartGrid  = Modes.Of(light: "#E8EBEF", dark: "#242A33");
-    // The card's own surface and hairline. Named `Chart*` rather than `Surface`/`Border` because a token name is shared
-    // across the whole compiled app: a kit that declared `Surface` would collide with the same name in the app or in
-    // another kit such as `Osysharp.Ui`.
-    ChartSurface = Modes.Of(light: "#FFFFFF", dark: "#171B21");
-    ChartBorder  = Modes.Of(light: "#E3E6EA", dark: "#2A2F37");
-    ChartInk   = Modes.Of(light: "#1A1F26", dark: "#E6EAF0");
-    ChartMuted = Modes.Of(light: "#5B6472", dark: "#98A2B3");
-    // The hover readout's surface, inverted against the card in both modes: a tooltip that shares the chart's surface
-    // reads as part of the picture, and it sits on top of marks it must stay legible against. The crosshair is a
-    // mid-tone that works on either surface without being mistaken for a gridline.
-    ChartTipBg  = Modes.Of(light: "#1A1F26", dark: "#F2F4F7");
-    ChartTipInk = Modes.Of(light: "#F7F9FB", dark: "#12161C");
-    ChartCross  = Modes.Of(light: "#9AA4B2", dark: "#5B6472");
+    //    The hues are validated for CVD separation, a lightness band, a chroma floor and surface contrast: worst
+    //    adjacent CVD ΔE 9.1 light / 8.4 dark against a target of 8, worst normal-vision ΔE 19.6 / 19.3 against a
+    //    floor of 15. Blue, orange, aqua, yellow, magenta, green, violet, red.
+    Series1 = Colors.Primary;
+    Series2 = Palette.Series(2, Colors.Primary, "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948");
+    Series3 = Palette.Series(3, Colors.Primary, "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948");
+    Series4 = Palette.Series(4, Colors.Primary, "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948");
+    Series5 = Palette.Series(5, Colors.Primary, "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948");
+    Series6 = Palette.Series(6, Colors.Primary, "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948");
+    Series7 = Palette.Series(7, Colors.Primary, "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948");
+    Series8 = Palette.Series(8, Colors.Primary, "#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948");
+    // The chart's own furniture, recessive by construction and the theme's own: the card is the theme's surface and its
+    // card hairline, a gridline is the theme's muted tint (one step off the surface, never a mid-grey rule competing
+    // with the data), and the text tiers are its ink and muted text. A label never wears a series colour, because a
+    // light categorical hue (yellow, aqua) is illegible as text; identity belongs to the swatch beside the text.
+    //
+    // Named `Chart*` rather than read as `Surface`/`Border` directly so an app can re-dress the chart alone — a chart
+    // card one shade off the page, say — without touching every other card.
+    ChartSurface = Colors.Surface;
+    ChartBorder  = Colors.CardLine;
+    ChartGrid    = Colors.Muted;
+    ChartInk     = Colors.OnSurface;
+    ChartMuted   = Colors.TextMuted;
+    // The hover readout, inverted against the card in both modes: a tooltip that shares the chart's surface reads as
+    // part of the picture, and it sits on top of marks it must stay legible against. The crosshair is the muted text
+    // tone — visible on the card without being mistaken for a gridline.
+    ChartTipBg  = Colors.OnSurface;
+    ChartTipInk = Colors.Surface;
+    ChartCross  = Colors.TextMuted;
     // Annotations get their own ink rather than a palette slot. Every `Series*` hue means "this series", and an
     // annotation that borrowed one would read as a series, when annotations deliberately have no legend entry, no
-    // palette slot and no effect on the scale. A neutral ink says "this is a note about the chart".
+    // palette slot and no effect on the scale. A neutral violet ink no theme token stands for says "this is a note
+    // about the chart" — the kit's own colour, for that reason.
     ChartNote  = Modes.Of(light: "#7A4BC4", dark: "#B695F0");
-    // The one place colour carries meaning rather than identity. The `Series*` hues answer "which series is this";
-    // these two answer "which way did it go", per data point, and only the candle uses them. Green for up and red for
-    // down is the convention readers of price charts already know.
+    // The one place colour carries meaning rather than identity: which way a candle went. Up and down are the theme's
+    // success and danger tones — the green and red readers of price charts already know, in the theme's own shades.
     //
     // Colour is not the only channel: for a reader with a red/green colour-vision deficiency it carries nothing. A
     // candle's direction is also its shape (a down candle is filled, an up candle hollow), which survives a greyscale
-    // print, a `forced-colors` display and deuteranopia. The light-mode hues are the palette's own `Series6` (green)
-    // and `Series8` (red), which were validated for CVD separation from each other.
-    ChartUp   = Modes.Of(light: "#008300", dark: "#3DBB6B");
-    ChartDown = Modes.Of(light: "#e34948", dark: "#F2726F");
+    // print, a `forced-colors` display and deuteranopia.
+    ChartUp   = Colors.Success;
+    ChartDown = Colors.Danger;
   }
-  // Type sizes, under chart-owned names for the same reason as the colours. Declaring them lets the kit be written in
-  // tokens rather than raw `"13px"` literals, which `osy lint` requires, without depending on `Osysharp.Ui`.
+  // Type, under chart-owned names for the same reason as the colours, and the theme's own steps: a look that sets its
+  // body at 16px for legibility sets the chart's labels with it.
   FontSize {
-    ChartTitle = "15px";
-    ChartLabel = "13px";
-    ChartTick  = "12px";
+    ChartTitle = FontSize.Subhead;
+    ChartLabel = FontSize.Label;
+    ChartTick  = FontSize.Caption;
   }
-  FontWeight { ChartStrong = 600; }
-  // The readout's fade and layer, under chart-owned names for the same reason. `Fade` and `Tooltip` exist in
-  // `Osysharp.Ui`, so using them here would compile for an app that also uses `Osysharp.Ui` and fail for one that does
-  // not. A kit must declare every token it uses.
+  FontWeight { ChartStrong = FontWeight.Semibold; }
+  // The readout's fade and layer — the chart's own timing and stacking, which no theme step stands for.
   Motion { ChartFade = "opacity 0.12s ease"; }
   ZIndex { ChartTip = 600; }
 }

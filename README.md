@@ -57,7 +57,8 @@ An enum member is written qualified — `side: AxisSide.Left` — exactly as in 
 | signed values | a **negative** value grows from the zero line, downwards on a column chart and leftwards on a bar; the axis opens below zero to make room, and a mixed-sign stack splits at the line |
 | hover | a crosshair and a readout naming **every** series' value in the hovered category |
 | legend | automatic for two or more series, swatch + name; `position:` on any edge or `None`, `interactive: true` to toggle a series off |
-| palette | eight validated hues in fixed order, never cycled |
+| palette | led by the app's accent, then validated hues in fixed order (any too close to the accent skipped), never cycled |
+| theme | the card, ink, gridlines, readout and type are the app's own theme tokens, so a chart follows whatever theme or look the app wears |
 | annotations | a reference `Rule`, a shaded `Band`, a labelled `Note` — none of them a series |
 | table | `Table()` below the chart, or `Table(position: Instead)` in place of it — a real grid |
 | bare mode | `chrome: Bare` — the sparkline: no card, axes, gridlines, legend, heading or hover |
@@ -243,9 +244,16 @@ its share, because reading either off the angles is exactly what a reader cannot
 - **Lines and areas need no measurement.** They are drawn in a nominal 1000-unit space with `Path(stretch: true)`,
   so the browser maps the viewBox onto whatever box the plot gets. A resize costs no re-render and no observer, and
   the geometry is right on the server's first paint.
-- **The palette is computed, not chosen.** Eight hues validated for CVD separation, a lightness band, a chroma floor
-  and surface contrast in BOTH modes, assigned in fixed order and never cycled. Each is a `Palette.From` ramp, so a
-  series has a hover step and a wash as well as its base colour.
+- **The palette follows the theme, and stays readable.** The first series is the app's accent (`Colors.Primary`), so
+  a chart looks like part of the page it is on. The rest come from eight hues validated for CVD separation, a
+  lightness band, a chroma floor and surface contrast in BOTH modes, in fixed order and never cycled — and every hue
+  too close to the accent to tell apart from it (in light or dark mode) is skipped, so an orange accent never sits
+  beside the orange series. `Palette.Series` makes that choice when the app compiles, against the accent the app
+  actually wears. Any slot is the app's to shadow: `Colors { Series2 = Palette.From("#…"); }`.
+- **The furniture is the theme's.** The card is `Colors.Surface` with the `Colors.CardLine` hairline, gridlines are
+  `Colors.Muted`, labels `Colors.OnSurface` and `Colors.TextMuted`, the readout inverts them, a candle's up and down
+  are `Colors.Success` and `Colors.Danger`, and the type steps are the theme's `Subhead`, `Label` and `Caption`. So a
+  look, or an app's own theme, gets a fitting chart without a line written for it.
 - **One value scale, always.** Two y-axes on one chart is the single most misleading thing a charting library
   offers; two measures of different magnitude belong in two charts.
 - **A bar's baseline is zero**, not the data's minimum. That one is not configurable — `Axis(min:)` can extend the
@@ -301,7 +309,7 @@ It is pure Osy# — there is nothing to build. A fork is edited and published as
 
 | file | what it is |
 |---|---|
-| `theme.osy` | the kit's opening argument, and its design tokens — the eight validated series hues, the chart's own surface/ink/grid, the readout's palette, type sizes, motion and layer |
+| `theme.osy` | the kit's opening argument, and its design tokens — the series (led by the accent, then the eight validated hues), the chart's surface/ink/grid and readout as theme tokens, type sizes, motion and layer |
 | `vocabularies.osy` | the shapes an author fills (`Mark`, `CandleMark`, `AxisDef`, `Annotation`, `LegendDef`, `TableDef`) and the config records a call site writes (`Line`/`Area`/`Column`/`Bar`/`Scatter`/`Candle`/`Axis`/`Legend`/`Table`/`Rule`/`Band`/`Note`) |
 | `scale.osy` | the arithmetic — the shared value scale, round-number ticks, tick labels, palette slots, and the point lists a `Path` is drawn from |
 | `Chart.osy` | the `Chart` component itself, plus the value and category axes |
