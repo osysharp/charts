@@ -126,7 +126,8 @@ component Plot(ChartCtx c) {
       }
       // Annotation rules and notes are claims about the data, so they sit over it: a target line hidden behind the
       // column that reaches it would be hidden exactly when it matters.
-      if (HasKind(c.Annotations, AnnotationKind.Rule) || HasKind(c.Annotations, AnnotationKind.Note)) {
+      if (HasKind(c.Annotations, AnnotationKind.Rule) || HasKind(c.Annotations, AnnotationKind.Note)
+          || HasKind(c.Annotations, AnnotationKind.Marker)) {
         AnnotationMarks(c: c);
       }
       // Last, so it is on top of every mark: the band has to receive the pointer for all of them.
@@ -578,6 +579,41 @@ component AnnotationMarks(ChartCtx c) {
             Text(caption, position: Position.Absolute, right: 0, top: $"{100.0 - pct}%",
                  fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: hue, lineHeight: 1,
                  whiteSpace: WhiteSpace.Nowrap, bg: Colors.ChartSurface, px: 1);
+          }
+        }
+      }
+
+      // MARKERS — an event at one category, drawn across the plot at that category's slot. Their labels alternate between
+      // two rows at the top by the category's parity, so markers on neighbouring categories do not print over each other.
+      foreach (var a in OfKind(c.Annotations, AnnotationKind.Marker)) {
+        var idx = CategoryIndex(c.Labels, a.Category);
+        var hue = a.Color != null ? a.Color : "var(--colors-chartnote)";
+        var name = a.Label == "" ? a.Category : $"{a.Label} ({a.Category})";
+        if (idx < 0) {
+          Text($"⚠ marker \"{a.Label}\" names a category this chart does not have: \"{a.Category}\"",
+               position: Position.Absolute, left: 0, bottom: 0, fontSize: FontSize.ChartTick, color: Colors.ChartDown, lineHeight: 1,
+               bg: Colors.ChartSurface, px: 1);
+        } else {
+          var slot = SlotPct(idx, c.Labels.Length);
+          var row = idx % 2 == 0 ? "0px" : "14px";
+          if (c.Horizontal) {
+            Box(position: Position.Absolute, left: 0, right: 0, top: $"{slot}%", h: 0,
+                borderTW: 1, borderStyle: BorderStyle.Dashed, border: hue, role: UiRole.ListItem, label: name);
+            if (a.Label != "") {
+              Text(a.Label, position: Position.Absolute, right: 0, top: $"{slot}%", fontSize: FontSize.ChartTick,
+                   fontWeight: FontWeight.ChartStrong, color: hue, lineHeight: 1, whiteSpace: WhiteSpace.Nowrap, bg: Colors.ChartSurface, px: 1);
+            }
+          } else {
+            Box(position: Position.Absolute, top: 0, bottom: 0, left: $"{slot}%", w: 0,
+                borderLW: 1, borderStyle: BorderStyle.Dashed, border: hue, role: UiRole.ListItem, label: name);
+            if (a.Label != "") {
+              // Right of the line unless it would not fit there — the same measured decision a Note's caption makes.
+              var textW = Layout.TextWidth(a.Label) ?? (double)a.Label.Length * 6.5;
+              var fitsRight = slot * plotW / 100.0 + textW + 4.0 <= plotW;
+              Text(a.Label, position: Position.Absolute, top: row, left: $"{slot}%", translateX: fitsRight ? "0" : "-100%",
+                   fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: hue, lineHeight: 1,
+                   whiteSpace: WhiteSpace.Nowrap, bg: Colors.ChartSurface, px: 1);
+            }
           }
         }
       }

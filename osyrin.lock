@@ -2,15 +2,5 @@
   "platform": {
     "version": "0.9.0"
   },
-  "entries": [
-    {
-      "name": "Osysharp.Ui",
-      "kind": "package",
-      "version": "2.19.0",
-      "hash": "sha256:e6bd3827545a764c5de31da34609c317c76778531a4de4864b670ca3530b5ca4",
-      "minPlatform": "0.9.0",
-      "shadow": "app-forkable",
-      "source": "workspace:Platform.Core/Dsl/OsySharp/Baseline/Capabilities/Ui"
-    }
-  ]
+  "entries": []
 }

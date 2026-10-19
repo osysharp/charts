@@ -87,7 +87,7 @@ pass and the content may be from another.
 `Layout.TextWidth` is a pure function of the string and the font, so there is nothing to lag. The cost is that
 `ReadoutWidth` must mirror `ReadoutBody`'s lines — change one, change the other.
 
-### Annotations — a `Rule`, a `Band`, a `Note`
+### Annotations — a `Rule`, a `Band`, a `Note`, a `Marker`
 
 Things that are true about the chart but are **not in the data**: a target, an acceptable range, the day something
 happened. Written as children, like a mark or an axis:
@@ -98,9 +98,13 @@ Chart(title: "Revenue against target", labels: months) {
   Band(from: 55000.0, to: 65000.0, label: "Acceptable");
   Rule(value: 60000.0, label: "Target");
   Note(category: "May", value: 73000.0, label: "v2 launch");
+  Marker(category: "Mar", label: "price change");
   Axis(side: AxisSide.Left);
 }
 ```
+
+A `Marker` is an EVENT — a dashed line across the plot at one category, named at the top: a release, a migration, the
+day a price changed. Two events on one category are one marker whose label names both.
 
 ⚑ **AN ANNOTATION IS NOT A SERIES, and that is the whole design.** No legend entry, no palette slot (it has its own
 ink), it cannot be toggled off, and **it does not move the scale** — because none of those things is true of "the

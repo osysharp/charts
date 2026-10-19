@@ -72,7 +72,7 @@ public enum AxisSide { Left, Bottom }
 // ── annotations ──────────────────────────────────────────────────────────────────────────────────────────
 
 /// What an annotation draws as. A closed vocabulary, like `MarkKind`.
-public enum AnnotationKind { Rule, Band, Note }
+public enum AnnotationKind { Rule, Band, Note, Marker }
 
 /// Something true about the chart that is not in the data: a target, an acceptable range, the day of a release.
 ///
@@ -105,7 +105,7 @@ public class Annotation {
   /// `Band`: the two edges. A band drawn from the larger to the smaller is the same band — they are sorted.
   public double From;
   public double To;
-  /// `Note`: which category it sits on, by NAME rather than by index.
+  /// `Note` and `Marker`: which category it sits on, by NAME rather than by index.
   ///
   /// By name because categories are runtime data: insert a month at the front and every index-addressed note would
   /// silently point one slot to the left. A name that no longer exists is a mismatch the chart can report, and does
@@ -311,6 +311,20 @@ public class TableDef {
 /// "Q3 reforecast complete" need different amounts of room at the same position.
 [AllowAnonymous] component Note(string category, double value, string label, string? color = null,
                                 AnnotationKind kind = AnnotationKind.Note) : Annotation;
+
+/// AN EVENT ON THE CATEGORY AXIS — a line straight across the plot at one category: a release, a migration, the day a
+/// price changed. It marks WHEN something happened, where a `Rule` marks a VALUE.
+///
+///     Marker(category: "Oct 14", label: "0.9.16");
+///
+/// Drawn dashed in the annotation ink, from the plot's foot to its top, with its label at the top. It crosses the CATEGORY
+/// axis, so it is vertical on a column or line chart and horizontal on a `Bar` chart — the opposite of a `Rule`.
+///
+/// ⚑ It names its category by NAME, like a `Note`, and a name the chart does not have is said on the chart rather than
+/// dropped. Two events on one category are best written as ONE marker whose label names both: two lines drawn on the same
+/// spot are one line with two labels fighting over it.
+[AllowAnonymous] component Marker(string category, string label = "", string? color = null,
+                                  AnnotationKind kind = AnnotationKind.Marker) : Annotation;
 
 /// An axis. `Axis(side: AxisSide.Left)` is the value axis; `Axis(side: AxisSide.Bottom)` names the categories.
 [AllowAnonymous] component Axis(AxisSide side = AxisSide.Left, bool grid = true, int ticks = 4,
