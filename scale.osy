@@ -386,10 +386,16 @@ string ColorOf(Mark m, int slot) { return m.Color != null ? m.Color : PaletteSlo
 ///
 /// Flat and x,y-interleaved, which is the shape `Path` takes. A single point is centred rather than pinned left, so a
 /// one-value series is not a dot in a corner.
-double[] PointsOf(double[] values, double lo, double top, double w, double h) {
+///
+/// `slots` is how many categories the axis has (`SlotCount`), and the x step is taken from IT, not from how many values
+/// this series carries. A series shorter than the axis — a burn-up with values for the days so far and labels for the
+/// whole cycle — is plotted against the FIRST `values.Length` categories and stops at its last value. Dividing by the
+/// series' own length instead stretched those points across the whole axis, so each sat under the wrong label and the
+/// line appeared to run to the last day.
+internal double[] PointsOf(double[] values, int slots, double lo, double top, double w, double h) {
   var pts = new List<double>();
-  var n = values.Length;
-  if (n == 0 || top <= lo) { return pts.ToArray(); }
+  var n = Math.Max(slots, values.Length);
+  if (values.Length == 0 || top <= lo) { return pts.ToArray(); }
   var i = 0;
   foreach (var v in values) {
     // The CENTRE of this value's slot — the same place the category label and the column sit. Spreading points
@@ -404,8 +410,8 @@ double[] PointsOf(double[] values, double lo, double top, double w, double h) {
 }
 
 /// The same points, closed down to the baseline — an area's outline.
-double[] AreaPointsOf(double[] values, double lo, double top, double w, double h) {
-  var pts = PointsOf(values, lo, top, w, h);
+internal double[] AreaPointsOf(double[] values, int slots, double lo, double top, double w, double h) {
+  var pts = PointsOf(values, slots, lo, top, w, h);
   if (pts.Length == 0) { return pts; }
   var closed = new List<double>();
   foreach (var p in pts) { closed.Add(p); }
@@ -414,6 +420,17 @@ double[] AreaPointsOf(double[] values, double lo, double top, double w, double h
   closed.Add(pts[0]);                // …along the baseline, back under the first
   closed.Add(h);
   return closed.ToArray();
+}
+
+/// The 1.4.0 forms, kept on the surface so 1.4.1 stays a patch: each value gets its own slot (`slots` = how many values
+/// there are), which is exactly what they did then. They go internal with the slot-aware forms at 2.0.0.
+double[] PointsOf(double[] values, double lo, double top, double w, double h) {
+  return PointsOf(values, values.Length, lo, top, w, h);
+}
+
+/// The 1.4.0 form of `AreaPointsOf` (see the 1.4.0 `PointsOf` above).
+double[] AreaPointsOf(double[] values, double lo, double top, double w, double h) {
+  return AreaPointsOf(values, values.Length, lo, top, w, h);
 }
 
 /// The NOMINAL horizontal coordinate space every path is drawn in. Arbitrary — the viewBox scales it to whatever

@@ -76,7 +76,8 @@ component Plot(ChartCtx c) {
       foreach (var m in shown) {
         if (m.Kind == MarkKind.Bar && !stacked) {
           Bars(m: m, lo: lo, top: top, color: ColorOf(m, SlotOf(marks, m)), showValues: showValues,
-               index: ColumnIndex(marks, m), count: ColumnCount(marks), axis: axis, bare: c.Bare);
+               index: ColumnIndex(marks, m), count: ColumnCount(marks), axis: axis, bare: c.Bare,
+               slots: SlotCount(marks, labels));
         }
       }
       // Candles before lines, for the same reason columns come before them: a moving average is drawn over the sessions
@@ -85,13 +86,14 @@ component Plot(ChartCtx c) {
       // Selected by type, not by `Kind`: `OfType<CandleMark>()` narrows and re-types in one step, which is why
       // `Candles` can take a `CandleMark` and read `.Highs` directly.
       foreach (var m in shown.OfType<CandleMark>()) {
-        Candles(m: m, lo: lo, top: top, color: m.Color, axis: axis);
+        Candles(m: m, lo: lo, top: top, color: m.Color, axis: axis, slots: SlotCount(marks, labels));
       }
       // Column marks first, so lines and points draw OVER them.
       foreach (var m in shown) {
         if (m.Kind == MarkKind.Column && !stacked) {
           Columns(m: m, lo: lo, top: top, color: ColorOf(m, SlotOf(marks, m)), showValues: showValues, labels: labels,
-                  index: ColumnIndex(marks, m), count: ColumnCount(marks), axis: axis, bare: c.Bare);
+                  index: ColumnIndex(marks, m), count: ColumnCount(marks), axis: axis, bare: c.Bare,
+                  slots: SlotCount(marks, labels));
         }
       }
       foreach (var m in shown) {
@@ -103,7 +105,7 @@ component Plot(ChartCtx c) {
           //
           // The usual objection to opacity, that two overlapping washes stop looking like either series, does not
           // apply: the path is fill-only (its line is drawn separately), and an area chart is meant for one series.
-          Path(points: AreaPointsOf(m.Values, lo, top, PlotSpace(), (double)height),
+          Path(points: AreaPointsOf(m.Values, SlotCount(marks, labels), lo, top, PlotSpace(), (double)height),
                // Fill only, no stroke. The area's outline closes down to the baseline and back along it, so stroking it
                // would draw a vertical rule at each end and a line along the bottom: three edges that are not data. The
                // series' own line is drawn separately, over the top, by the line pass below.
@@ -114,14 +116,15 @@ component Plot(ChartCtx c) {
       foreach (var m in shown) {
         // An AREA gets a line too — the wash is the fill and this is its edge.
         if (m.Kind == MarkKind.Line || m.Kind == MarkKind.Area) {
-          Path(points: PointsOf(m.Values, lo, top, PlotSpace(), (double)height),
+          Path(points: PointsOf(m.Values, SlotCount(marks, labels), lo, top, PlotSpace(), (double)height),
                stroke: ColorOf(m, SlotOf(marks, m)), width: 2, smooth: false,
                w: PlotSpace(), h: height, position: Position.Absolute, inset: 0, stretch: true);
         }
       }
       foreach (var m in shown) {
         if (m.Kind == MarkKind.Scatter) {
-          Dots(m: m, lo: lo, top: top, color: ColorOf(m, SlotOf(marks, m)), axis: axis);
+          Dots(m: m, lo: lo, top: top, color: ColorOf(m, SlotOf(marks, m)), axis: axis,
+               slots: SlotCount(marks, labels));
         }
       }
       // Annotation rules and notes are claims about the data, so they sit over it: a target line hidden behind the
@@ -168,7 +171,7 @@ int ColumnIndex(Mark[] marks, Mark m) { return IndexOfMark(BarMarks(marks), m); 
 [Composable]
 [Part]
 component Columns(Mark m, double lo, double top, string color, bool showValues, string[] labels,
-                  AxisDef axis, int index = 0, int count = 1, bool bare = false) {
+                  AxisDef axis, int index = 0, int count = 1, bool bare = false, int slots = 0) {
   render {
     // `align: End` grows every bar from ONE baseline; the 2px gap is surface doing the separating, so neighbouring
     // bars read distinct without a stroke drawn around them.
@@ -216,6 +219,9 @@ component Columns(Mark m, double lo, double top, string color, bool showValues, 
           }
         }
       }
+      // The categories this series has no value for: empty slots, so its marks sit under the first labels instead
+      // of stretching across the axis (`PointsOf` says why).
+      foreach (var k in Enumerable.Range(0, Math.Max(0, slots - m.Values.Length))) { Box(grow: 1, basis: 0); }
     }
   }
 }
@@ -237,7 +243,7 @@ component Columns(Mark m, double lo, double top, string color, bool showValues, 
 [AllowAnonymous]
 [Composable]
 [Part]
-component Candles(CandleMark m, double lo, double top, string? color, AxisDef axis) {
+component Candles(CandleMark m, double lo, double top, string? color, AxisDef axis, int slots = 0) {
   render {
     Row(position: Position.Absolute, inset: 0, align: Align.End, role: UiRole.List, label: m.Label) {
       foreach (var i in Enumerable.Range(0, m.Values.Length)) {
@@ -262,6 +268,9 @@ component Candles(CandleMark m, double lo, double top, string? color, AxisDef ax
               bg: up ? Colors.ChartSurface : hue, borderW: 1, border: hue, rounded: 1);
         }
       }
+      // The categories this series has no value for: empty slots, so its marks sit under the first labels instead
+      // of stretching across the axis (`PointsOf` says why).
+      foreach (var k in Enumerable.Range(0, Math.Max(0, slots - m.Values.Length))) { Box(grow: 1, basis: 0); }
     }
   }
 }
@@ -278,7 +287,7 @@ string CandleLabel(Mark m, int i, double open, double high, double low, double c
 [AllowAnonymous]
 [Composable]
 [Part]
-component Dots(Mark m, double lo, double top, string color, AxisDef axis) {
+component Dots(Mark m, double lo, double top, string color, AxisDef axis, int slots = 0) {
   render {
     Row(position: Position.Absolute, inset: 0, align: Align.End, role: UiRole.List, label: m.Label) {
       foreach (var v in m.Values) {
@@ -289,6 +298,9 @@ component Dots(Mark m, double lo, double top, string color, AxisDef axis) {
           }
         }
       }
+      // The categories this series has no value for: empty slots, so its marks sit under the first labels instead
+      // of stretching across the axis (`PointsOf` says why).
+      foreach (var k in Enumerable.Range(0, Math.Max(0, slots - m.Values.Length))) { Box(grow: 1, basis: 0); }
     }
   }
 }
@@ -305,7 +317,7 @@ component Dots(Mark m, double lo, double top, string color, AxisDef axis) {
 [Composable]
 [Part]
 component Bars(Mark m, double lo, double top, string color, bool showValues,
-               AxisDef axis, int index = 0, int count = 1, bool bare = false) {
+               AxisDef axis, int index = 0, int count = 1, bool bare = false, int slots = 0) {
   render {
     Stack(position: Position.Absolute, inset: 0, gap: 2, role: UiRole.List, label: m.Label) {
       foreach (var v in m.Values) {
@@ -334,6 +346,9 @@ component Bars(Mark m, double lo, double top, string color, bool showValues,
           }
         }
       }
+      // The categories this series has no value for: empty slots, so its marks sit under the first labels instead
+      // of stretching across the axis (`PointsOf` says why).
+      foreach (var k in Enumerable.Range(0, Math.Max(0, slots - m.Values.Length))) { Box(grow: 1, basis: 0); }
     }
   }
 }
