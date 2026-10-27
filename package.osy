@@ -2,7 +2,7 @@
 // composed from the renderer's own built-in elements, so the package is source only. It is drawn in the UI kit's
 // theme — its card, ink and series follow whatever theme or look the app wears — so it uses the UI kit.
 package Osysharp.Charts {
-  version "1.7.0";
+  version "1.8.0";
   minPlatform "0.17.0";
   summary     "charts in pure Osy#, no JavaScript: many mark types on one scale, plus pie and axes.";
 

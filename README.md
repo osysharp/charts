@@ -323,9 +323,82 @@ It is pure Osy# — there is nothing to build. A fork is edited and published as
 | `Pie.osy` | the `Pie`/donut sibling component and its slice geometry |
 | `Table.osy` | the same data as a real `role: Grid` — below the chart or instead of it |
 
+## Examples
+
+Taken from this package's own tests, which compile and run on every release, and from its reference page, whose examples are compiled when the site is built.
+
+```osy
+app ChartExample {
+  use Osysharp.Charts;
+  model "model/**/*.osy";
+}
+
+using Osysharp.Charts;
+
+[Route("/")]
+[Render(CSR)]
+[AllowAnonymous]
+[Title("Revenue")]
+component Dashboard() {
+  string[] months  = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"];
+  double[] revenue = [42000.0, 55000.0, 48000.0, 61000.0, 73000.0, 69000.0];
+  double[] target  = [40000.0, 50000.0, 55000.0, 60000.0, 65000.0, 70000.0];
+
+  render {
+    Chart(title: "Revenue against target", subtitle: "First half", labels: months, height: 280) {
+      Column(label: "Revenue", values: revenue);
+      Line(label: "Target", values: target);
+      Rule(value: 60000.0, label: "Target");
+      Axis(side: AxisSide.Left, ticks: 4);
+    }
+  }
+}
+```
+
+From [the reference page](https://osysharp.com/reference/ui/chart-kit/).
+
+```osy
+app ChartFromData {
+  use Osysharp.Charts;
+  model "model/**/*.osy";
+}
+
+using Osysharp.Charts;
+
+class Region { public string Name; public double[] Revenue; }
+
+[Route("/")]
+[Render(CSR)]
+[AllowAnonymous]
+component Regions() {
+  string[] months = ["Jan", "Feb", "Mar"];
+  var regions = new List<Region> {
+    new Region { Name = "North", Revenue = [42000.0, 55000.0, 48000.0] },
+    new Region { Name = "South", Revenue = [38000.0, 41000.0, 52000.0] }
+  };
+  bool showTarget = true;
+
+  render {
+    Chart(title: "Revenue by region", labels: months) {
+      Axis(side: AxisSide.Left);
+      foreach (var r in regions) {
+        Column(label: r.Name, values: r.Revenue);
+      }
+      if (showTarget) { Rule(value: 50000.0, label: "Target"); }
+    }
+  }
+}
+```
+
+From [the reference page](https://osysharp.com/reference/ui/chart-kit/).
+
+## Learn more
+
+- [The Osysharp.Charts reference](https://osysharp.com/reference/ui/chart-kit/)
+- [Osysharp.Charts in the package catalogue](https://osysharp.com/packages/#osysharp-charts)
+- [The Osy# reference](https://osysharp.com/reference/) — the language, the runtime and every kit
+- [`llms-full.txt`](https://osysharp.com/llms-full.txt) — the whole reference and specification as one Markdown file, for a coding agent
+
 ## Licence
 
-MIT &mdash; see [`LICENSE`](LICENSE). Every `.osy` file here is yours to read, copy, fork and ship.
-
-This kit vendors **nothing**: 2,548 lines of Osy# and not one line of JavaScript. A charting library is the
-surface people are most certain needs a JS dependency, and it does not.
+MIT — see [`LICENSE`](LICENSE).
