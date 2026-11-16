@@ -11,9 +11,19 @@ namespace Osysharp.Charts;
 // line chart wants, and it is right for columns and dots too, so a reader who learns it on a bar chart already knows
 // it on a line chart.
 //
-// It needs no JavaScript. `inside HoverCell.Hover { Opacity = 1; }` is an ancestor-conditioned variant that compiles
-// to a descendant `:hover` CSS rule: no pointer handler, no coordinate arithmetic and no measurement. That is only
-// possible because the marks are elements; on a `<canvas>` it would be hit-testing against pixel coordinates.
+// It needs no JavaScript. `inside HoverCell.Hover { Display = Display.Flex; }` is an ancestor-conditioned variant that
+// compiles to a descendant `:hover` CSS rule: no pointer handler, no coordinate arithmetic and no measurement. That is
+// only possible because the marks are elements; on a `<canvas>` it would be hit-testing against pixel coordinates.
+//
+// The readout is the keyboard's too (WCAG 2.1.1). The band is ONE tab stop: arriving shows the first category's
+// readout, the arrows move it category by category, Home and End jump to the ends, Escape hides it and focus leaving
+// hides it. Each shown point is said through a live region in the readout's own words (`ReadoutWords`), so a screen
+// reader hears what a sighted reader sees. One stop rather than one per category: a twelve-month chart would
+// otherwise cost twelve Tab presses to get past.
+//
+// The readout is a `Display` reveal, not an `Opacity` one, because it is CONTENT shown on hover: the platform hides
+// such a reveal on Escape with the pointer still over it (WCAG 1.4.13), which it does for `Display` reveals only. The
+// crosshair is a 1px paint marking where the pointer is, not content, so it keeps its fade.
 
 /// How many categories this chart has — the labels, or the longest series if a mark carries more values than there
 /// are labels.
@@ -21,15 +31,35 @@ int SlotCount(Mark[] marks, string[] labels) {
   return Math.Max(labels.Length, marks.Max(m => m.Values.Length) ?? 0);
 }
 
-/// The hover band — one invisible cell per category, laid over the whole plot.
+/// The hover band — one invisible cell per category, laid over the whole plot — and the chart's one keyboard stop.
 ///
 /// It sits on top, so the band receives the pointer, not the marks beneath it. That is deliberate: a per-mark hover
 /// would fire over a bar and stay silent between bars. The marks keep their `role` and `aria-label`, and pointer
-/// events do not affect the accessibility tree, so screen-reader and keyboard users are unaffected.
+/// events do not affect the accessibility tree, so screen-reader users still read the marks one by one.
 [AllowAnonymous]
 [Composable]
 [Part]
 component HoverBand(ChartCtx c, int count) {
+  // The keyboard's point: which category the readout is at, and whether it is shown. Shown only while the band has
+  // the keyboard, so it can never be left open on a chart nobody is reading.
+  int at = 0;
+  bool reading = false;
+
+  // Arriving starts at the first category, every time: a reader who left and came back is not asked to remember where.
+  action Arrive() { at = 0; reading = true; }
+  action Leave() { reading = false; }
+  action Dismiss() { reading = false; }
+  // Every arrow moves, along the category axis in either orientation (Right and Down are "next" on a column chart and
+  // a bar chart alike), and stops at the ends rather than wrapping. A press after Escape brings the readout back at
+  // the point it moved to.
+  action Step(string key) {
+    if (key == "Right" || key == "Down") { at = Math.Min(at + 1, count - 1); }
+    if (key == "Left" || key == "Up") { at = Math.Max(at - 1, 0); }
+    if (key == "Home") { at = 0; }
+    if (key == "End") { at = count - 1; }
+    reading = true;
+  }
+
   render {
     // The band runs along the category axis: a row of full-height cells on a column chart, a stack of full-width cells
     // on a bar chart. It is one cell component either way, because `inside HoverCell.Hover { … }` names a component, so
@@ -44,17 +74,37 @@ component HoverBand(ChartCtx c, int count) {
     // `Layout.Width` is null on the server, where nothing is painted yet. The fallback keeps the centred placement, and
     // the client's first pass corrects the edges.
     var plotW = Layout.Width ?? 0.0;
-    if (c.Horizontal) {
-      Stack(position: Position.Absolute, inset: 0) {
-        foreach (var i in Enumerable.Range(0, count)) { HoverCell(c: c, index: i, plotW: plotW, count: count); }
+    var shownAt = reading ? at : -1;
+    // `onEscape` is bound only while the readout is shown, so the page's other Escape handlers are untouched the rest
+    // of the time; `onBlurWithin` hides it the moment the keyboard goes elsewhere.
+    Box(position: Position.Absolute, inset: 0, role: UiRole.Group, label: ValuesLabel(c),
+        keys: [Left, Right, Up, Down, Home, End], onKeyDown: Step,
+        onFocus: Arrive, onBlurWithin: Leave, onEscape: reading ? Dismiss : null) {
+      if (c.Horizontal) {
+        Stack(position: Position.Absolute, inset: 0) {
+          foreach (var i in Enumerable.Range(0, count)) {
+            HoverCell(c: c, index: i, plotW: plotW, count: count, shown: i == shownAt);
+          }
+        }
+      } else {
+        Row(position: Position.Absolute, inset: 0) {
+          foreach (var i in Enumerable.Range(0, count)) {
+            HoverCell(c: c, index: i, plotW: plotW, count: count, shown: i == shownAt);
+          }
+        }
       }
-    } else {
-      Row(position: Position.Absolute, inset: 0) {
-        foreach (var i in Enumerable.Range(0, count)) { HoverCell(c: c, index: i, plotW: plotW, count: count); }
+      // The live region: present from the start (a region that appears with its words is not announced), and holding
+      // the shown point's words only while it is shown. One pixel and clipped, because the readout already SHOWS them;
+      // this is the same words for a reader who cannot see the readout.
+      Box(position: Position.Absolute, w: "1px", h: "1px", overflow: Overflow.Hidden, role: UiRole.Status) {
+        if (reading) { Text(ReadoutWords(c, at)); }
       }
     }
   }
 }
+
+/// What the keyboard stop is called — the chart's title, then what it holds.
+string ValuesLabel(ChartCtx c) { return c.Title != "" ? $"{c.Title} values" : "Chart values"; }
 
 /// One category's hover target, in either orientation. Its own root is what `:hover` matches, which is why this is a
 /// component rather than a `Box` in the loop above: an ancestor-conditioned variant names a component.
@@ -64,7 +114,7 @@ component HoverBand(ChartCtx c, int count) {
 [AllowAnonymous]
 [Composable]
 [Part]
-component HoverCell(ChartCtx c, int index, double plotW = 0.0, int count = 0) {
+component HoverCell(ChartCtx c, int index, double plotW = 0.0, int count = 0, bool shown = false) {
   variants { base { Position = Position.Relative; } }
   render {
     // `grow`/`basis`/`w`/`h` are element props: they size this cell inside the band. The variants block holds only what
@@ -74,13 +124,13 @@ component HoverCell(ChartCtx c, int index, double plotW = 0.0, int count = 0) {
     // its children (a Row or a Stack), and that is a question of tree structure, not style.
     if (c.Horizontal) {
       Row(grow: 1, basis: 0, w: "100%") {
-        Crosshair(horizontal: true);
-        Readout(c: c, index: index, horizontal: true, plotW: plotW, count: count);
+        Crosshair(horizontal: true, shown: shown);
+        Readout(c: c, index: index, horizontal: true, plotW: plotW, count: count, shown: shown);
       }
     } else {
       Stack(grow: 1, basis: 0, h: "100%") {
-        Crosshair();
-        Readout(c: c, index: index, plotW: plotW, count: count);
+        Crosshair(shown: shown);
+        Readout(c: c, index: index, plotW: plotW, count: count, shown: shown);
       }
     }
   }
@@ -91,7 +141,7 @@ component HoverCell(ChartCtx c, int index, double plotW = 0.0, int count = 0) {
 [AllowAnonymous]
 [Composable]
 [Part]
-component Crosshair(bool horizontal = false) {
+component Crosshair(bool horizontal = false, bool shown = false) {
   variants {
     base { Opacity = 0; Transition = Motion.ChartFade; Position = Position.Absolute; Bg = Colors.ChartCross; PointerEvents = PointerEvents.None;
            Top = 0; Bottom = 0; Left = "50%"; W = 1;
@@ -102,6 +152,8 @@ component Crosshair(bool horizontal = false) {
     // orientations share the colour, the fade and the pointer rule, and nothing about shape: leaving `Bottom`/`W`
     // unanswered would give a horizontal rule that is also full-height and 1px wide.
     horizontal { Top = "50%"; Bottom = "auto"; Left = 0; Right = 0; W = "auto"; H = 1; }
+    // The keyboard's point (see `HoverBand`).
+    shown { Opacity = 1; }
   }
   render { Box(); }
 }
@@ -113,16 +165,18 @@ component Crosshair(bool horizontal = false) {
 [AllowAnonymous]
 [Composable]
 [Part]
-component Readout(ChartCtx c, int index, bool horizontal = false, double plotW = 0.0, int count = 0) {
+component Readout(ChartCtx c, int index, bool horizontal = false, double plotW = 0.0, int count = 0, bool shown = false) {
   variants {
-    base { Opacity = 0; Transition = Motion.ChartFade; Position = Position.Absolute; Top = 2; Left = "50%";
+    base { Display = Display.None; Position = Position.Absolute; Top = 2; Left = "50%";
            Bg = Colors.ChartTipBg; Color = Colors.ChartTipInk; Px = 3; Py = 2; Rounded = 6; WhiteSpace = WhiteSpace.Nowrap;
            Z = ZIndex.ChartTip; PointerEvents = PointerEvents.None;
-           inside HoverCell.Hover { Opacity = 1; } }
+           inside HoverCell.Hover { Display = Display.Flex; } }
     // On a horizontal chart the readout anchors to the LEFT of the plot rather than centring on the pointer: a bar
     // chart's rows are short, so a centred box would sit on top of the bar it is describing. The centring transform
     // moves to the other axis with it.
     horizontal { Left = 2; Top = "50%"; TranslateY = "-50%"; }
+    // The keyboard's point (see `HoverBand`). Shown by state, so Escape hides it through `HoverBand`'s `onEscape`.
+    shown { Display = Display.Flex; }
   }
   render {
     // The readout shifts itself inward at the plot edge. Centred on its cell, a long series name on a narrow chart
@@ -166,12 +220,23 @@ double ReadoutWidth(ChartCtx c, int index) {
   var w = index < c.Labels.Length ? (Layout.TextWidth(c.Labels[index]) ?? 0.0) : 0.0;
   foreach (var m in VisibleMarks(c.Marks, c.Hidden)) {
     if (index < m.Values.Length) {
-      var line = (Layout.TextWidth($"{m.Label} {Formatted(m.Values[index], c.Axis)}") ?? 0.0) + 16.0;
+      var line = (Layout.TextWidth(ReadoutLine(m, index, c.Axis)) ?? 0.0) + 16.0;
       if (line > w) { w = line; }
     }
   }
   // `Px = 3` on the readout — 12px of padding each side.
   return w > 0.0 ? w + 24.0 : 0.0;
+}
+
+/// One series' line in a readout: its name and its value at this category, through the chart's one formatter.
+string ReadoutLine(Mark m, int index, AxisDef axis) { return $"{m.Label} {Formatted(m.Values[index], axis)}"; }
+
+/// The readout as one sentence, for the live region: "Jan: Revenue 42K, Target 40K". The same lines `ReadoutBody`
+/// shows, in the same order and with the same hidden series left out, so what is heard is what is seen.
+string ReadoutWords(ChartCtx c, int index) {
+  var lines = VisibleMarks(c.Marks, c.Hidden).Where(m => index < m.Values.Length).Select(m => ReadoutLine(m, index, c.Axis)).ToList();
+  var said = string.Join(", ", lines);
+  return index < c.Labels.Length ? $"{c.Labels[index]}: {said}" : said;
 }
 
 /// WHAT a readout says — shared by both orientations, so the horizontal chart cannot grow its own wording.
@@ -190,7 +255,7 @@ component ReadoutBody(ChartCtx c, int index) {
         if (index < m.Values.Length) {
           Row(gap: 2, align: Align.Center) {
             Box(w: 8, h: 8, rounded: 4, bg: ColorOf(m, SlotOf(c.Marks, m)), shrink: 0);
-            Text($"{m.Label} {Formatted(m.Values[index], c.Axis)}", fontSize: FontSize.ChartTick, color: Colors.ChartTipInk);
+            Text(ReadoutLine(m, index, c.Axis), fontSize: FontSize.ChartTick, color: Colors.ChartTipInk);
           }
         }
       }

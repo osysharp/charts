@@ -514,7 +514,9 @@ double SegmentPct(double v, double total) {
 component AnnotationBands(ChartCtx c) {
   variants { base { PointerEvents = PointerEvents.None; } }
   render {
-    Box(position: Position.Absolute, inset: 0) {
+    // A list of its bands, as the rule layer is a list of its rules: each band is a list item with a name, and a list
+    // item is only one inside a list. "Ranges", not "Annotations", so a reader hears the two layers apart.
+    Box(position: Position.Absolute, inset: 0, role: UiRole.List, label: "Ranges") {
       foreach (var a in OfKind(c.Annotations, AnnotationKind.Band)) {
         var lo = AnnotationPct(BandLo(a), c.Lo, c.Top);
         var hi = AnnotationPct(BandHi(a), c.Lo, c.Top);
@@ -605,9 +607,13 @@ component AnnotationMarks(ChartCtx c) {
         var hue = a.Color != null ? a.Color : "var(--colors-chartnote)";
         var name = a.Label == "" ? a.Category : $"{a.Label} ({a.Category})";
         if (idx < 0) {
-          Text($"⚠ marker \"{a.Label}\" names a category this chart does not have: \"{a.Category}\"",
-               position: Position.Absolute, left: 0, bottom: 0, fontSize: FontSize.ChartTick, color: Colors.ChartDown, lineHeight: 1,
-               bg: Colors.ChartSurface, px: 1);
+          // The warning takes the marker's place in the list, so a list with only misplaced annotations still has items
+          // and a screen reader hears why the marker is missing.
+          Box(role: UiRole.ListItem) {
+            Text($"⚠ marker \"{a.Label}\" names a category this chart does not have: \"{a.Category}\"",
+                 position: Position.Absolute, left: 0, bottom: 0, fontSize: FontSize.ChartTick, color: Colors.ChartDown, lineHeight: 1,
+                 bg: Colors.ChartSurface, px: 1);
+          }
         } else {
           var slot = SlotPct(idx, c.Labels.Length);
           var row = idx % 2 == 0 ? "0px" : "14px";
@@ -650,10 +656,13 @@ component AnnotationMarks(ChartCtx c) {
         } else {
           // A note naming a category this chart does not have. Categories are runtime data, so this cannot be a compile
           // error, and it must not be dropped silently: the author would see a chart that renders perfectly but is
-          // missing what they asked for. So the chart says so, like "No data to plot".
-          Text($"⚠ note \"{a.Label}\" names a category this chart does not have: \"{a.Category}\"",
-               position: Position.Absolute, left: 0, top: 0, fontSize: FontSize.ChartTick, color: Colors.ChartDown, lineHeight: 1,
-               bg: Colors.ChartSurface, px: 1);
+          // missing what they asked for. So the chart says so, like "No data to plot" — as an item of the annotation list,
+          // in the note's place.
+          Box(role: UiRole.ListItem) {
+            Text($"⚠ note \"{a.Label}\" names a category this chart does not have: \"{a.Category}\"",
+                 position: Position.Absolute, left: 0, top: 0, fontSize: FontSize.ChartTick, color: Colors.ChartDown, lineHeight: 1,
+                 bg: Colors.ChartSurface, px: 1);
+          }
         }
       }
     }

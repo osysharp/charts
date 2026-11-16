@@ -349,6 +349,8 @@ public class TableDef {
 /// the series: hiding series 2 must not repaint series 3 to 8. `VisibleMarks(c.Marks, c.Hidden)` is how a drawing
 /// pass gets the subset, and `SlotOf` is always asked of `Marks`.
 public class ChartCtx {
+  /// The chart's title, or "" — what its keyboard stop is called (`ValuesLabel`).
+  public string Title;
   /// Every series as written, hidden ones included (see the note above).
   public Mark[] Marks;
   /// The category names, in order.

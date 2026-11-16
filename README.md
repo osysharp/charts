@@ -55,7 +55,7 @@ An enum member is written qualified — `side: AxisSide.Left` — exactly as in 
 | marks | line, area, column and horizontal bar (GROUPED when there is more than one series, or `stacked: true`), scatter, OHLC candle — and `Pie`/donut as a sibling component |
 | axes | a value axis with round-number ticks, a category axis, optional gridlines, a **title**, an explicit **min/max**, a value **format** and **prefix/suffix** |
 | signed values | a **negative** value grows from the zero line, downwards on a column chart and leftwards on a bar; the axis opens below zero to make room, and a mixed-sign stack splits at the line |
-| hover | a crosshair and a readout naming **every** series' value in the hovered category |
+| hover | a crosshair and a readout naming **every** series' value in the hovered category — by keyboard too |
 | legend | automatic for two or more series, swatch + name; `position:` on any edge or `None`, `interactive: true` to toggle a series off |
 | palette | led by the app's accent, then validated hues in fixed order (any too close to the accent skipped), never cycled |
 | theme | the card, ink, gridlines, readout and type are the app's own theme tokens, so a chart follows whatever theme or look the app wears |
@@ -71,8 +71,8 @@ and a readout of every series at that category — the shared-crosshair behaviou
 be right for columns and dots too. **One rule for every mark kind**, so what you learn on a bar chart holds on a line
 chart.
 
-It is still no JavaScript: `inside HoverCell.Hover { Opacity = 1; }` is an ancestor-conditioned variant that lowers
-to a descendant CSS rule. No pointer handler, no coordinates, no measurement. On a `<canvas>` this is hit-testing
+It is still no JavaScript: `inside HoverCell.Hover { Display = Display.Flex; }` is an ancestor-conditioned variant that
+lowers to a descendant CSS rule. No pointer handler, no coordinates, no measurement. On a `<canvas>` this is hit-testing
 against pixel coordinates, which is most of a charting library.
 
 **And it stays inside the plot.** Centred on its cell, a readout at the first or last category would hang past the
@@ -86,6 +86,15 @@ the readout lags its content by construction (109.0 against a painted 114.6), be
 pass and the content may be from another.
 `Layout.TextWidth` is a pure function of the string and the font, so there is nothing to lag. The cost is that
 `ReadoutWidth` must mirror `ReadoutBody`'s lines — change one, change the other.
+
+### The readout by keyboard
+
+The band is also the chart's **one tab stop**, named after the chart (`"Revenue values"`). Arriving shows the first
+category's readout; the arrows move it a category at a time (Right or Down is next, in either orientation), Home and
+End jump to the ends. **Escape hides it** and leaves the keyboard where it was; focus leaving hides it. Each point is
+said through a live region in the readout's own words (`"Jan: Revenue 42K, Target 40K"`), so what is heard is what is
+seen. A readout opened by the pointer hides on Escape as well: it is a `Display` reveal, which the platform dismisses
+by itself. The crosshair is a paint, not content, so it keeps its fade and stays.
 
 ### Annotations — a `Rule`, a `Band`, a `Note`, a `Marker`
 

@@ -102,7 +102,7 @@ component Chart(
   // Everything worked out above, in one value (see `ChartCtx`). Built here because this is the only component that
   // knows all of it; every piece below is handed the result rather than each ingredient.
   live var ctx = new ChartCtx {
-    Marks = marks, Labels = labels, Hidden = hidden, Annotations = annotations, Axis = vaxis,
+    Title = title, Marks = marks, Labels = labels, Hidden = hidden, Annotations = annotations, Axis = vaxis,
     Lo = lo, Top = top, Ticks = ticks, Height = height,
     Horizontal = horizontal, Stacked = stacked, ShowGrid = showGrid, ShowValues = showValues, Bare = bare,
     HasValueAxis = hasValueAxis, HasCategoryAxis = hasCategoryAxis,

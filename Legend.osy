@@ -61,13 +61,18 @@ component LegendToggle(string label, string color, bool on, Action<string> onTog
     // The state is `pressed`, and the name is just the series. A toggle that stays down is exactly what `aria-pressed`
     // describes, so the accessible name stays the thing the entry names. Folding the state into the name
     // ("Revenue: hidden") would make the name change under the reader, which a name should not do.
-    Pressable(role: UiRole.ListItem, label: label, pressed: !on, onClick: () => onToggle(label)) {
-      // A hidden series is dimmed and struck through: two channels, because opacity alone is a weak signal on a light
-      // hue and disappears entirely in a greyscale print or a forced-colors display.
-      Row(gap: 2, align: Align.Center, opacity: on ? 1.0 : 0.45) {
-        Box(w: 10, h: 10, rounded: 6, bg: on ? color : Colors.ChartSurface, borderW: 2, border: color, shrink: 0);
-        Text(label, fontSize: FontSize.ChartTick, color: Colors.ChartMuted,
-             textDecoration: on ? TextDecoration.None : TextDecoration.LineThrough);
+    //
+    // The list item is the box and the toggle is a button inside it. `aria-pressed` belongs to a button, and a list
+    // owns list items, so each role keeps the attribute that is allowed on it.
+    Box(role: UiRole.ListItem) {
+      Pressable(label: label, pressed: !on, onClick: () => onToggle(label)) {
+        // A hidden series is dimmed and struck through: two channels, because opacity alone is a weak signal on a light
+        // hue and disappears entirely in a greyscale print or a forced-colors display.
+        Row(gap: 2, align: Align.Center, opacity: on ? 1.0 : 0.45) {
+          Box(w: 10, h: 10, rounded: 6, bg: on ? color : Colors.ChartSurface, borderW: 2, border: color, shrink: 0);
+          Text(label, fontSize: FontSize.ChartTick, color: Colors.ChartMuted,
+               textDecoration: on ? TextDecoration.None : TextDecoration.LineThrough);
+        }
       }
     }
   }
