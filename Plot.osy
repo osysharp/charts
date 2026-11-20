@@ -600,13 +600,11 @@ component AnnotationMarks(ChartCtx c) {
         }
       }
 
-      // MARKERS — an event at one category, drawn across the plot at that category's slot. Their labels alternate between
-      // two rows at the top by the category's parity, so markers on neighbouring categories do not print over each other.
+      // MARKERS — an event at one category, drawn across the plot at that category's slot. Their labels are laid out
+      // together (`MarkerPlaces`, markers.osy): never over each other, never outside the plot, and a line with no room
+      // for its label keeps its name in the readout.
       foreach (var a in OfKind(c.Annotations, AnnotationKind.Marker)) {
-        var idx = CategoryIndex(c.Labels, a.Category);
-        var hue = a.Color != null ? a.Color : "var(--colors-chartnote)";
-        var name = a.Label == "" ? a.Category : $"{a.Label} ({a.Category})";
-        if (idx < 0) {
+        if (CategoryIndex(c.Labels, a.Category) < 0) {
           // The warning takes the marker's place in the list, so a list with only misplaced annotations still has items
           // and a screen reader hears why the marker is missing.
           Box(role: UiRole.ListItem) {
@@ -614,27 +612,23 @@ component AnnotationMarks(ChartCtx c) {
                  position: Position.Absolute, left: 0, bottom: 0, fontSize: FontSize.ChartTick, color: Colors.ChartDown, lineHeight: 1,
                  bg: Colors.ChartSurface, px: 1);
           }
+        }
+      }
+      foreach (var p in MarkerPlaces(c, plotW, c.Horizontal)) {
+        if (c.Horizontal) {
+          Box(position: Position.Absolute, left: 0, right: 0, top: $"{p.Pct}%", h: 0,
+              borderTW: 1, borderStyle: BorderStyle.Dashed, border: p.Hue, role: UiRole.ListItem, label: p.Name);
+          if (p.Text != "") {
+            Text(p.Text, position: Position.Absolute, right: 0, top: $"{p.Pct}%", fontSize: FontSize.ChartTick,
+                 fontWeight: FontWeight.ChartStrong, color: p.Hue, lineHeight: 1, whiteSpace: WhiteSpace.Nowrap, bg: Colors.ChartSurface, px: 1);
+          }
         } else {
-          var slot = SlotPct(idx, c.Labels.Length);
-          var row = idx % 2 == 0 ? "0px" : "14px";
-          if (c.Horizontal) {
-            Box(position: Position.Absolute, left: 0, right: 0, top: $"{slot}%", h: 0,
-                borderTW: 1, borderStyle: BorderStyle.Dashed, border: hue, role: UiRole.ListItem, label: name);
-            if (a.Label != "") {
-              Text(a.Label, position: Position.Absolute, right: 0, top: $"{slot}%", fontSize: FontSize.ChartTick,
-                   fontWeight: FontWeight.ChartStrong, color: hue, lineHeight: 1, whiteSpace: WhiteSpace.Nowrap, bg: Colors.ChartSurface, px: 1);
-            }
-          } else {
-            Box(position: Position.Absolute, top: 0, bottom: 0, left: $"{slot}%", w: 0,
-                borderLW: 1, borderStyle: BorderStyle.Dashed, border: hue, role: UiRole.ListItem, label: name);
-            if (a.Label != "") {
-              // Right of the line unless it would not fit there — the same measured decision a Note's caption makes.
-              var textW = Layout.TextWidth(a.Label) ?? (double)a.Label.Length * 6.5;
-              var fitsRight = slot * plotW / 100.0 + textW + 4.0 <= plotW;
-              Text(a.Label, position: Position.Absolute, top: row, left: $"{slot}%", translateX: fitsRight ? "0" : "-100%",
-                   fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: hue, lineHeight: 1,
-                   whiteSpace: WhiteSpace.Nowrap, bg: Colors.ChartSurface, px: 1);
-            }
+          Box(position: Position.Absolute, top: 0, bottom: 0, left: $"{p.Pct}%", w: 0,
+              borderLW: 1, borderStyle: BorderStyle.Dashed, border: p.Hue, role: UiRole.ListItem, label: p.Name);
+          if (p.Text != "") {
+            Text(p.Text, position: Position.Absolute, top: p.Row == 0 ? "0px" : "14px", left: $"{p.Left}px",
+                 fontSize: FontSize.ChartTick, fontWeight: FontWeight.ChartStrong, color: p.Hue, lineHeight: 1,
+                 whiteSpace: WhiteSpace.Nowrap, bg: Colors.ChartSurface, px: 1);
           }
         }
       }

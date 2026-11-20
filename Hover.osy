@@ -224,6 +224,11 @@ double ReadoutWidth(ChartCtx c, int index) {
       if (line > w) { w = line; }
     }
   }
+  // The markers on this category, one line each, with no swatch (`ReadoutBody`).
+  foreach (var l in MarkerLinesAt(c, index)) {
+    var line = Layout.TextWidth(l) ?? 0.0;
+    if (line > w) { w = line; }
+  }
   // `Px = 3` on the readout — 12px of padding each side.
   return w > 0.0 ? w + 24.0 : 0.0;
 }
@@ -236,6 +241,9 @@ string ReadoutLine(Mark m, int index, AxisDef axis) { return $"{m.Label} {Format
 string ReadoutWords(ChartCtx c, int index) {
   var lines = VisibleMarks(c.Marks, c.Hidden).Where(m => index < m.Values.Length).Select(m => ReadoutLine(m, index, c.Axis)).ToList();
   var said = string.Join(", ", lines);
+  // The markers there, after the series: "14 Oct: Downtime 3; platform 0.9.16, Admin 2.4.0".
+  var marked = MarkerLinesAt(c, index);
+  if (marked.Count > 0) { said = said == "" ? string.Join(", ", marked) : $"{said}; {string.Join(", ", marked)}"; }
   return index < c.Labels.Length ? $"{c.Labels[index]}: {said}" : said;
 }
 
@@ -258,6 +266,11 @@ component ReadoutBody(ChartCtx c, int index) {
             Text(ReadoutLine(m, index, c.Axis), fontSize: FontSize.ChartTick, color: Colors.ChartTipInk);
           }
         }
+      }
+      // What is marked on this category — a release, a migration — one line each. This is where a marker drawn without a
+      // label (it had no room, or the author gave it none) is named.
+      foreach (var l in MarkerLinesAt(c, index)) {
+        Text(l, fontSize: FontSize.ChartTick, color: Colors.ChartTipInk);
       }
     }
   }

@@ -113,7 +113,10 @@ Chart(title: "Revenue against target", labels: months) {
 ```
 
 A `Marker` is an EVENT — a dashed line across the plot at one category, named at the top: a release, a migration, the
-day a price changed. Two events on one category are one marker whose label names both.
+day a price changed. Markers on one category are one line whose label names them all ("first +N" when that does not
+fit); labels are laid out together in two staggered rows, never over each other and never outside the plot, and one
+with no room is left to the readout. `lines:` is what the readout of that category says about the marker, one line each
+— so `Marker(category: "Mar", lines: ["platform 0.9.16"])` is a plain line, named when the reader points at it.
 
 ⚑ **AN ANNOTATION IS NOT A SERIES, and that is the whole design.** No legend entry, no palette slot (it has its own
 ink), it cannot be toggled off, and **it does not move the scale** — because none of those things is true of "the

@@ -1,0 +1,111 @@
+namespace Osysharp.Charts;
+
+// ── where a marker's label goes ──────────────────────────────────────────────────────────────────────────────
+//
+// ⚑ A MARKER'S LABEL NEVER PRINTS OVER ANOTHER AND NEVER STARTS OUTSIDE THE PLOT. Measured 18 Nov on the platform's status
+//   page: a month of daily releases, each labelled, ran into each other in two unreadable rows and were cut off at the
+//   plot's left edge, because each label chose its side alone (right of its line, or left when the right had no room —
+//   which on a narrow plot put its start past the left edge) and the rows alternated by the category's parity whether
+//   or not the neighbour had a label at all.
+//
+//   So the labels are laid out TOGETHER, left to right, against the plot's measured width:
+//     1. markers on one category are one place — one line, one label naming them all;
+//     2. a label sits right of its line, or ends at it when the right has no room, and is then pulled inside the plot;
+//     3. it takes the first of two rows where it clears the label before it;
+//     4. when neither row has room, the shortened "first +N" is tried; when that has none either, the line is drawn
+//        without a label, and the readout of its category names it (`MarkerLinesAt`, Hover.osy).
+
+/// One category's markers, as the plot draws them: one line, and its label if it has room.
+class MarkerPlace {
+  /// The category's index and its slot's middle, in percent of the plot.
+  public int Index = 0;
+  public double Pct = 0.0;
+  /// The line's ink — the first marker's own colour, or the annotation ink.
+  public string Hue = "";
+  /// What the line is called in the accessible tree: every marker's label (or its lines), then the category.
+  public string Name = "";
+  /// The label drawn, or "" when there was no room for one (or nothing to say).
+  public string Text = "";
+  /// Which row it sits in (0 the top, 1 under it), and its left edge in px.
+  public int Row = 0;
+  public double Left = 0.0;
+}
+
+/// The gap a label keeps from the one before it in its row, in px.
+double MarkerLabelGap() { return 6.0; }
+
+/// How wide a marker label paints: its text, plus the `px: 1` either side of it.
+double MarkerLabelWidth(string text) { return (Layout.TextWidth(text) ?? (double)text.Length * 6.5) + 8.0; }
+
+/// What one marker says in a readout or an accessible name: its lines, or its label when it has none.
+List<string> MarkerWords(Annotation a) {
+  var words = new List<string>();
+  if (a.Lines != null && a.Lines.Length > 0) {
+    foreach (var l in a.Lines) { words.Add(l); }
+  } else if (a.Label != "") {
+    words.Add(a.Label);
+  }
+  return words;
+}
+
+/// The markers that sit on category `index`, in the order written.
+Annotation[] MarkersAt(ChartCtx c, int index) {
+  return OfKind(c.Annotations, AnnotationKind.Marker).Where(a => CategoryIndex(c.Labels, a.Category) == index).ToArray();
+}
+
+/// Every category's markers placed, left to right, in a plot `plotW` px wide (see the note at the top).
+/// A category axis that runs DOWN the plot (`horizontal`) has one label per line at the right edge, so there a label is
+/// drawn only when it clears the one above it.
+List<MarkerPlace> MarkerPlaces(ChartCtx c, double plotW, bool horizontal) {
+  var places = new List<MarkerPlace>();
+  var markers = OfKind(c.Annotations, AnnotationKind.Marker);
+  var indices = markers.Select(a => CategoryIndex(c.Labels, a.Category)).Where(i => i >= 0).Distinct().OrderBy(i => i).ToList();
+  // Where each row's last label ends, in px; nothing placed yet.
+  var end0 = -1000.0;
+  var end1 = -1000.0;
+  var lastTop = -1000.0;
+  var plotH = (double)c.Height;
+  foreach (var idx in indices) {
+    var here = MarkersAt(c, idx);
+    var named = here.Where(a => a.Label != "").Select(a => a.Label).ToList();
+    var words = new List<string>();
+    foreach (var a in here) { words.AddRange(MarkerWords(a)); }
+    var place = new MarkerPlace { Index = idx, Pct = SlotPct(idx, c.Labels.Length),
+      Hue = here[0].Color != null ? here[0].Color : "var(--colors-chartnote)",
+      Name = words.Count == 0 ? c.Labels[idx] : $"{string.Join(", ", words)} ({c.Labels[idx]})" };
+    if (named.Count > 0) {
+      var candidates = new List<string>();
+      candidates.Add(string.Join(" · ", named));
+      if (named.Count > 1) { candidates.Add($"{named[0]} +{named.Count - 1}"); }
+      foreach (var text in candidates) {
+        if (place.Text != "") { break; }
+        var w = MarkerLabelWidth(text);
+        if (horizontal) {
+          // One label per line, at the right edge, at its line's height: it needs its own line height clear of the last.
+          var top = place.Pct * plotH / 100.0;
+          if (w <= plotW && top >= lastTop + 14.0) { place.Text = text; lastTop = top; }
+          continue;
+        }
+        if (w > plotW) { continue; }
+        var x = place.Pct * plotW / 100.0;
+        var left = x + w <= plotW ? x : x - w;
+        if (left < 0.0) { left = 0.0; }
+        if (left + w > plotW) { left = plotW - w; }
+        if (left >= end0 + MarkerLabelGap()) {
+          place.Text = text; place.Row = 0; place.Left = left; end0 = left + w;
+        } else if (left >= end1 + MarkerLabelGap()) {
+          place.Text = text; place.Row = 1; place.Left = left; end1 = left + w;
+        }
+      }
+    }
+    places.Add(place);
+  }
+  return places;
+}
+
+/// The readout's marker lines for category `index` — every marker there, in the order written.
+List<string> MarkerLinesAt(ChartCtx c, int index) {
+  var lines = new List<string>();
+  foreach (var a in MarkersAt(c, index)) { lines.AddRange(MarkerWords(a)); }
+  return lines;
+}

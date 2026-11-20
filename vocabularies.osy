@@ -111,6 +111,10 @@ public class Annotation {
   /// silently point one slot to the left. A name that no longer exists is a mismatch the chart can report, and does
   /// (see `AnnotationMarks` in Plot.osy).
   public string Category = "";
+  /// `Marker`: what the hover readout says about it, one line each — "platform 0.9.16", "Admin 2.4.0". The readout of
+  /// its category lists these under the series; a marker with none lists its label. So a line drawn WITHOUT a label
+  /// still names what it marks, to a reader who points at it or arrives there by the keyboard.
+  public string[]? Lines;
 }
 
 /// Where the legend sits, or that there is none.
@@ -321,10 +325,16 @@ public class TableDef {
 /// axis, so it is vertical on a column or line chart and horizontal on a `Bar` chart — the opposite of a `Rule`.
 ///
 /// ⚑ It names its category by NAME, like a `Note`, and a name the chart does not have is said on the chart rather than
-/// dropped. Two events on one category are best written as ONE marker whose label names both: two lines drawn on the same
-/// spot are one line with two labels fighting over it.
+/// dropped.
+///
+/// ⚑ LABELS NEVER OVERLAP AND NEVER LEAVE THE PLOT (`MarkerPlaces`, markers.osy). Markers on one category are drawn as ONE
+/// line whose label names them all, shortened to "first +N" when the whole does not fit. Labels are measured and laid out
+/// left to right in two staggered rows, each pulled inside the plot's edges; a label that still has no room is not drawn,
+/// and its line keeps its name in the hover readout. `lines` is what that readout says, one line each:
+///
+///     Marker(category: "Oct 14", lines: ["platform 0.9.16", "Admin 2.4.0"]);   // a plain line, named on hover
 [AllowAnonymous] component Marker(string category, string label = "", string? color = null,
-                                  AnnotationKind kind = AnnotationKind.Marker) : Annotation;
+                                  AnnotationKind kind = AnnotationKind.Marker, string[]? lines = null) : Annotation;
 
 /// An axis. `Axis(side: AxisSide.Left)` is the value axis; `Axis(side: AxisSide.Bottom)` names the categories.
 [AllowAnonymous] component Axis(AxisSide side = AxisSide.Left, bool grid = true, int ticks = 4,
