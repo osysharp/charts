@@ -283,14 +283,92 @@ string Formatted(double v, AxisDef axis) {
   //   The MAGNITUDE is formatted and the sign put back in front, rather than string-patching the result: a format
   //   specifier may place the sign anywhere (or in brackets), and rewriting its output would be guessing at it.
   var magnitude = v < 0.0 ? 0.0 - v : v;
-  var body = axis.Format == "" ? TickLabel(magnitude) : Convert.ToString(magnitude, axis.Format);
+  var body = BodyOf(magnitude, axis);
   // ⚠ Decided on the FORMATTED text, not on `v`: a value that rounds away to zero at this axis's precision — −0.4
   //   under `N0` — must read `£0`, never `-£0`, which is a number nobody writes and which would appear only on the
   //   one tick a reader checks against the zero line. `TickLabel` rounds too (2 decimals, or 1 in K/M), so the same
   //   guard covers both branches.
-  var zero = axis.Format == "" ? TickLabel(0.0) : Convert.ToString(0.0, axis.Format);
+  var zero = BodyOf(0.0, axis);
   var negative = v < 0.0 && body != zero;
   return (negative ? "-" : "") + axis.Prefix + body + axis.Suffix;
+}
+
+/// A value's magnitude as this axis says it, before the sign and the prefix/suffix: in its `Unit` when it has one
+/// ("3.2 h", "240 KiB"), else by its `Format`, else compact (`1.5K`).
+internal string BodyOf(double magnitude, AxisDef axis) {
+  if (axis.Unit != AxisUnit.None) { return UnitSaid(magnitude, axis.Unit); }
+  return axis.Format == "" ? TickLabel(magnitude) : Convert.ToString(magnitude, axis.Format);
+}
+
+/// A TICK as this axis says it. Without a `Unit` that is `Formatted`. With one, every tick is said in the ONE display
+/// unit `step` (`UnitStep` of the largest value the axis reaches, the unit its ticks were rounded in), so the axis
+/// reads "0 h, 5 h, 10 h" — never "0 ms" at its foot and "20 h" at its top, which is what saying each tick in its own
+/// size would give — and 59 min of data reads "0, 20, 40, 60 min", never "0, 0.33, 0.67, 1 h".
+internal string TickSaid(double v, AxisDef axis, double step) {
+  if (axis.Unit == AxisUnit.None) { return Formatted(v, axis); }
+  var magnitude = v < 0.0 ? 0.0 - v : v;
+  var body = Math.Round(magnitude / step, 6).ToString("0.##") + " " + UnitWord(step, axis.Unit);
+  var negative = v < 0.0 && Math.Round(magnitude / step, 6) > 0.0;
+  return (negative ? "-" : "") + axis.Prefix + body + axis.Suffix;
+}
+
+// ── units (PLATFORM-709) ─────────────────────────────────────────────────────────────────────────────────
+//
+// ⚑ THE SAME RULE AS THE LOOK KIT'S CONSOLE CHARTS (`Osysharp.Look`: ChartUnitStep, ChartUnitWord, ChartValueSaid,
+//   ChartAxisTicks), so a duration or an amount of data reads the same on an app's chart as on Admin's and Foundry's:
+//   the display unit is the largest one the value reaches at least once, a value is said to one decimal in it, and an
+//   axis steps in round numbers of the unit its largest value reaches, every tick said in it. Change one and change the other with it; `tests/Units.test.osy`
+//   pins this kit's half with the same cases the look kit's `tests/BarChart.test.osy` pins.
+
+/// What one display unit is worth in the unit the values are given in: 3,600,000 for "h" when the largest value is an
+/// hour or more of milliseconds, 1,024 for "KiB" when it is a KiB or more of bytes (but under a MiB), and so on.
+internal double UnitStep(double most, AxisUnit unit) {
+  if (unit == AxisUnit.Milliseconds) {
+    return most >= 3600000.0 ? 3600000.0 : most >= 60000.0 ? 60000.0 : most >= 1000.0 ? 1000.0 : 1.0;
+  }
+  if (unit == AxisUnit.Bytes) {
+    return most >= 1099511627776.0 ? 1099511627776.0 : most >= 1073741824.0 ? 1073741824.0
+         : most >= 1048576.0 ? 1048576.0 : most >= 1024.0 ? 1024.0 : 1.0;
+  }
+  return 1.0;
+}
+
+/// The name of the display unit `UnitStep` chose: "ms", "s", "min" or "h"; "B", "KiB", "MiB", "GiB" or "TiB".
+internal string UnitWord(double step, AxisUnit unit) {
+  if (unit == AxisUnit.Milliseconds) {
+    return step >= 3600000.0 ? "h" : step >= 60000.0 ? "min" : step >= 1000.0 ? "s" : "ms";
+  }
+  if (unit == AxisUnit.Bytes) {
+    return step >= 1099511627776.0 ? "TiB" : step >= 1073741824.0 ? "GiB" : step >= 1048576.0 ? "MiB" : step >= 1024.0 ? "KiB" : "B";
+  }
+  return "";
+}
+
+/// One value in the largest unit it reaches: "450 ms", "12.5 s", "4 min", "3.2 h"; "512 B", "240 KiB", "1.5 GiB".
+internal string UnitSaid(double value, AxisUnit unit) {
+  var step = UnitStep(value, unit);
+  if (unit == AxisUnit.Bytes) {
+    var amount = value / step;
+    return (step == 1.0 || amount >= 10.0 ? Math.Round(amount).ToString("0") : amount.ToString("0.0")) + " " + UnitWord(step, unit);
+  }
+  return (step == 1.0 ? Math.Round(value).ToString("0") : Math.Round(value / step, 1).ToString("0.#")) + " " + UnitWord(step, unit);
+}
+
+/// The display unit of an axis whose values reach from `lo` to `hi`: `UnitStep` of whichever reaches further from zero.
+double AxisUnitStep(double lo, double hi, AxisUnit unit) => UnitStep(Math.Max(hi, 0.0 - lo), unit);
+
+/// The tick VALUES, top-down, for an axis whose values are given in a `unit`: round steps of the display unit the
+/// data reaches (`AxisUnitStep`), so 19.5 h of milliseconds gives 20, 15, 10, 5, 0 h, and 59 min gives 60, 40, 20, 0 min.
+double[] UnitTicksOf(double lo, double hi, int target, AxisUnit unit) {
+  if (unit == AxisUnit.None) { return TicksOf(lo, hi, target); }
+  var step = AxisUnitStep(lo, hi, unit);
+  return TicksOf(lo / step, hi / step, target).Select(t => t * step).ToArray();
+}
+
+/// The top of the painted scale for an axis in a `unit` — its highest tick, as `ScaleTop` is for one without.
+double UnitScaleTop(double lo, double hi, int target, AxisUnit unit) {
+  var ticks = UnitTicksOf(lo, hi, target, unit);
+  return ticks.Length > 0 ? ticks[0] : (hi > 0.0 ? hi : 1.0);
 }
 
 /// Is this chart horizontal? True as soon as any mark is a `Bar`.

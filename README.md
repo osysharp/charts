@@ -96,6 +96,22 @@ said through a live region in the readout's own words (`"Jan: Revenue 42K, Targe
 seen. A readout opened by the pointer hides on Escape as well: it is a `Display` reveal, which the platform dismisses
 by itself. The crosshair is a paint, not content, so it keeps its fade and stays.
 
+**A tap shows the category tapped, not the first.** A pointer's press focuses the band first — which arrives at the
+first category — and its click then moves the readout to the cell pressed. Each cell is named by its readout's words
+(`"Mar: Revenue 48K"`), so a test presses it by that name.
+
+**One readout at a time.** The pressed (or the keyboard's) readout gives way while the pointer is anywhere over the
+plot, so a mouse that pressed one day and moved to another sees that day's readout alone, never two side by side. The
+live region still says the pressed day. Tests: `tests/OneCard.test.osy` (`osy test --pixels`).
+
+### Durations and amounts of data — `Axis(unit:)`
+
+Values given in milliseconds or bytes take `Axis(unit: AxisUnit.Milliseconds)` or `Axis(unit: AxisUnit.Bytes)`. The
+axis steps in round numbers of the unit its largest value reaches (19.5 h of ms reads 0–20 h in fives; 900 KiB reads
+0–1000 KiB; 59 min reads 0–60 min), every tick in that one unit; each value elsewhere is said in the largest unit it
+reaches itself ("19.5 h", "45 s", "512 B"). The rule is the Osyrin look's console charts' (`Osysharp.Look`), so the two
+cannot read a duration differently. Tests: `tests/Units.test.osy`, `tests/Tap.test.osy`.
+
 ### Annotations — a `Rule`, a `Band`, a `Note`, a `Marker`
 
 Things that are true about the chart but are **not in the data**: a target, an acceptable range, the day something

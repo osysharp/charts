@@ -69,6 +69,15 @@ public class CandleMark : Mark {
 /// completable — the same discipline `align: Align.Center` follows.
 public enum AxisSide { Left, Bottom }
 
+/// What the values on an axis are given IN, when the chart is to say them in a unit of its own choosing (`AxisDef.Unit`).
+///
+/// `Milliseconds`: a duration, said in ms, s, min or h. `Bytes`: an amount of data, said in binary units (B, KiB, MiB,
+/// GiB, TiB). The axis picks ONE display unit from the largest value it has to reach and steps in round numbers OF IT,
+/// so 19.5 h of milliseconds reads 0, 5, 10, 15, 20 h rather than 0 to 80M, and 900 KiB reads 0 to 1000 KiB. Each value
+/// in the readout, the table and a mark's name is said in the largest unit it reaches itself ("3.2 h", "45 s",
+/// "240 KiB", "1.5 GiB"). `None` (the default) leaves the numbers to `Format`.
+public enum AxisUnit { None, Milliseconds, Bytes }
+
 // ── annotations ──────────────────────────────────────────────────────────────────────────────────────────
 
 /// What an annotation draws as. A closed vocabulary, like `MarkKind`.
@@ -175,6 +184,12 @@ public class AxisDef {
   /// meant. (`C` itself works, and formats in the browser like every other specifier.)
   public string Prefix = "";
   public string Suffix = "";
+
+  /// What the values are given in — `AxisUnit.Milliseconds` or `AxisUnit.Bytes` — so the chart says them in a unit it
+  /// picks by size: `Axis(unit: AxisUnit.Milliseconds)` scales a day of 19.5 h of CPU time as 0, 5, 10, 15, 20 h, and
+  /// says that day as "19.5 h" in the readout. It replaces `Format` for every number on the chart (the ticks, the
+  /// readout, the table, the on-mark values and each mark's accessible name); `Prefix` and `Suffix` still wrap it.
+  public AxisUnit Unit = AxisUnit.None;
 
   /// An EXPLICIT domain. Null takes the value from the data — the default, and right nearly always.
   ///
@@ -337,10 +352,12 @@ public class TableDef {
                                   AnnotationKind kind = AnnotationKind.Marker, string[]? lines = null) : Annotation;
 
 /// An axis. `Axis(side: AxisSide.Left)` is the value axis; `Axis(side: AxisSide.Bottom)` names the categories.
+/// `Axis(unit: AxisUnit.Milliseconds)` / `Axis(unit: AxisUnit.Bytes)` says durations and amounts of data in a unit
+/// chosen by size (`AxisUnit`).
 [AllowAnonymous] component Axis(AxisSide side = AxisSide.Left, bool grid = true, int ticks = 4,
                                 string title = "", string format = "",
                                 string prefix = "", string suffix = "",
-                                double? min = null, double? max = null) : AxisDef;
+                                double? min = null, double? max = null, AxisUnit unit = AxisUnit.None) : AxisDef;
 
 // ── what the pieces pass each other ──────────────────────────────────────────────────────────────────────
 
@@ -378,6 +395,9 @@ public class ChartCtx {
   public double Top;
   /// The tick VALUES, top-down (the paint order for a vertical axis).
   public double[] Ticks;
+  /// With an `AxisUnit`, what one display unit is worth in the values' own unit (3,600,000 when the ticks are said in
+  /// hours of milliseconds); 1 without one.
+  public double UnitStep;
   /// The plot's height in px.
   public int Height;
 

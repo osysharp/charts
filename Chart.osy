@@ -87,8 +87,12 @@ component Chart(
                                      : (stacked ? MaxStackedOf(visible) : MaxOf(visible));
   // A pinned top is honoured exactly: rounding it up to a nicer number would overrule the one number the author
   // stated. Unpinned, the top is the highest round tick, so the tallest mark meets a gridline.
-  live var top = vaxis.Max != null ? (double)vaxis.Max : ScaleTop(lo, rawHi, tickCount);
-  live var ticks = vaxis.Max != null ? TicksBetween(lo, top, tickCount) : TicksOf(lo, rawHi, tickCount);
+  // With a `Unit`, the round steps are round in the display unit (0, 5, 10, 15, 20 h), not in the unit the values
+  // are given in (0, 20M, 40M ms).
+  live var top = vaxis.Max != null ? (double)vaxis.Max : UnitScaleTop(lo, rawHi, tickCount, vaxis.Unit);
+  live var ticks = vaxis.Max != null ? TicksBetween(lo, top, tickCount) : UnitTicksOf(lo, rawHi, tickCount, vaxis.Unit);
+  // The one display unit every tick is said in (`TickSaid`): the one the data reaches, which the ticks were rounded in.
+  live var unitStep = AxisUnitStep(lo, rawHi, vaxis.Unit);
   live var showGrid = vaxis.Grid && !bare;
   // Which strips are drawn. The VALUE axis is on the orientation's value side and is drawn unless the author
   // declared axes and left that side out; the CATEGORY strip is drawn whenever there are labels to put in it.
@@ -103,7 +107,7 @@ component Chart(
   // knows all of it; every piece below is handed the result rather than each ingredient.
   live var ctx = new ChartCtx {
     Title = title, Marks = marks, Labels = labels, Hidden = hidden, Annotations = annotations, Axis = vaxis,
-    Lo = lo, Top = top, Ticks = ticks, Height = height,
+    Lo = lo, Top = top, Ticks = ticks, UnitStep = unitStep, Height = height,
     Horizontal = horizontal, Stacked = stacked, ShowGrid = showGrid, ShowValues = showValues, Bare = bare,
     HasValueAxis = hasValueAxis, HasCategoryAxis = hasCategoryAxis,
   };
@@ -193,7 +197,7 @@ component ChartBody(ChartCtx c) {
             if (c.HasCategoryAxis) { CategoryAxisV(labels: c.Labels, height: c.Height); }
             Stack(gap: 2, grow: 1) {
               Plot(c: c);
-              if (c.HasValueAxis) { ValueAxisH(ticks: c.Ticks, axis: c.Axis); }
+              if (c.HasValueAxis) { ValueAxisH(ticks: c.Ticks, axis: c.Axis, step: c.UnitStep); }
               if (c.HasValueAxis && c.Axis.Title != "") {
                 // `justify: Center` on the ROW, not `align: Center` on the Text: a Text is shrink-to-fit, so
                 // centring its own contents centres nothing. The row is what has the width.
@@ -205,7 +209,7 @@ component ChartBody(ChartCtx c) {
           }
         } else {
           Row(gap: 2, align: Align.Stretch) {
-            if (c.HasValueAxis) { ValueAxis(ticks: c.Ticks, height: c.Height, axis: c.Axis); }
+            if (c.HasValueAxis) { ValueAxis(ticks: c.Ticks, height: c.Height, axis: c.Axis, step: c.UnitStep); }
             Stack(gap: 2, grow: 1) {
               Plot(c: c);
               if (c.HasCategoryAxis) { CategoryAxis(labels: c.Labels); }
@@ -241,7 +245,7 @@ bool AnySide(AxisDef[] axes, AxisSide side) { return axes.Any(a => a.Side == sid
 [AllowAnonymous]
 [Composable]
 [Part]
-component ValueAxis(double[] ticks, int height, AxisDef axis) {
+component ValueAxis(double[] ticks, int height, AxisDef axis, double step = 1.0) {
   render {
     Stack(shrink: 0) {
       // Labels are positioned absolutely, at the same fractions the gridlines use, rather than distributed with
@@ -251,7 +255,7 @@ component ValueAxis(double[] ticks, int height, AxisDef axis) {
       // makes every number on the chart suspect.
       Box(position: Position.Relative, h: height, w: 52, shrink: 0) {
         foreach (var i in Enumerable.Range(0, ticks.Length)) {
-          TickLabel_(text: Formatted(ticks[i], axis), top: $"{TickPct(i, ticks.Length)}%");
+          TickLabel_(text: TickSaid(ticks[i], axis, step), top: $"{TickPct(i, ticks.Length)}%");
         }
       }
     }
@@ -290,11 +294,11 @@ component TickLabel_(string text, string top) {
 [AllowAnonymous]
 [Composable]
 [Part]
-component ValueAxisH(double[] ticks, AxisDef axis) {
+component ValueAxisH(double[] ticks, AxisDef axis, double step = 1.0) {
   render {
     Box(position: Position.Relative, w: "100%", h: 16) {
       foreach (var i in Enumerable.Range(0, ticks.Length)) {
-        TickLabelH_(text: Formatted(Ascending(ticks)[i], axis), left: $"{TickPct(i, ticks.Length)}%");
+        TickLabelH_(text: TickSaid(Ascending(ticks)[i], axis, step), left: $"{TickPct(i, ticks.Length)}%");
       }
     }
   }

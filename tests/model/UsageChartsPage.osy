@@ -1,0 +1,37 @@
+namespace ChartKitTests;
+
+using Osysharp.Charts;
+
+// Usage charts alone at the root (PLATFORM-709): a week of CPU time given in milliseconds (19.5 h on the busiest
+// day), a week of egress given in bytes (900 KiB on the busiest day), and build times whose longest, 59 min, rounds
+// the axis up to 60 min.
+
+/// The usage charts page the kit's tests read.
+[Route("/")]
+[AllowAnonymous]
+[Title("Usage charts")]
+[Render(CSR)]
+component UsageChartsPage() {
+  string[] days = ["18 Nov", "19 Nov", "20 Nov", "21 Nov", "22 Nov", "23 Nov", "24 Nov"];
+  double[] cpu = [9000000.0, 70200000.0, 1500.0, 28800000.0, 40320000.0, 45000.0, 11520000.0];
+  double[] egress = [122880.0, 921600.0, 245760.0, 512.0, 307200.0, 0.0, 655360.0];
+  string[] builds = ["#41", "#42", "#43"];
+  double[] buildTimes = [3540000.0, 720000.0, 1980000.0];
+
+  render {
+    Stack(p: 6, gap: 6, maxW: "640px") {
+      Chart(title: "CPU", labels: days) {
+        Column(label: "CPU", values: cpu);
+        Axis(unit: AxisUnit.Milliseconds);
+      }
+      Chart(title: "Egress", labels: days) {
+        Column(label: "Egress", values: egress);
+        Axis(unit: AxisUnit.Bytes);
+      }
+      Chart(title: "Build time", labels: builds, height: 160) {
+        Column(label: "Build", values: buildTimes);
+        Axis(unit: AxisUnit.Milliseconds);
+      }
+    }
+  }
+}

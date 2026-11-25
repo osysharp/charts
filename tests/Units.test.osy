@@ -1,0 +1,44 @@
+// A chart's values given in milliseconds or bytes are said in a unit chosen by size (`Axis(unit:)`, PLATFORM-709):
+// the axis steps in round numbers of the unit the largest value reaches, and the readout says each value in the
+// largest unit it reaches itself. The same cases as the look kit's console charts (`osyrin/kits/look/tests/BarChart`),
+// so a duration reads the same on an app's chart as on Admin's.
+
+[Test]
+void An_axis_in_milliseconds_steps_in_hours_and_one_in_bytes_in_KiB() {
+  Ui.Visit("/");
+  // 19.5 h at most: 0 to 20 h in fives, not 0 to 80M.
+  Assert.Visible("20 h");
+  Assert.Visible("15 h");
+  Assert.Visible("10 h");
+  Assert.Hidden("80M");
+  // 900 KiB at most: 0 to 1000 KiB in 250s, not 0 to 1M.
+  Assert.Visible("1000 KiB");
+  Assert.Visible("750 KiB");
+  Assert.Visible("250 KiB");
+  Assert.Hidden("750K");
+  // 59 min at most rounds the axis up to 60 min, and every tick stays in minutes: never "0.33 h".
+  Assert.Visible("60 min");
+  Assert.Visible("40 min");
+  Assert.Hidden("0.33 h");
+}
+
+[Test]
+void The_readout_says_each_value_in_the_largest_unit_it_reaches() {
+  Ui.Visit("/");
+  Ui.Focus("CPU values");
+  Assert.Visible("18 Nov: CPU 2.5 h");
+  Ui.Press("ArrowRight");
+  Assert.Visible("19 Nov: CPU 19.5 h");
+  Ui.Press("ArrowRight");
+  Assert.Visible("20 Nov: CPU 1.5 s");
+  Ui.Focus("Egress values");
+  Ui.Press("ArrowRight");
+  Assert.Visible("19 Nov: Egress 900 KiB");
+  Ui.Press("End");
+  Assert.Visible("24 Nov: Egress 640 KiB");
+  Ui.Press("Home");
+  Ui.Press("ArrowRight");
+  Ui.Press("ArrowRight");
+  Ui.Press("ArrowRight");
+  Assert.Visible("21 Nov: Egress 512 B");
+}

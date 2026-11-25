@@ -21,6 +21,11 @@ namespace Osysharp.Charts;
 // reader hears what a sighted reader sees. One stop rather than one per category: a twelve-month chart would
 // otherwise cost twelve Tab presses to get past.
 //
+// ONE READOUT AT A TIME. The keyboard's (and a tap's) crosshair and readout are a second pair in their cell, inside a
+// `KeyMark` that hides while the pointer is anywhere over the band, so a pressed day and the day the pointer is over
+// never show two readouts side by side. The pointer's readout is the one a mouse reader is looking at; the live region
+// still says the pressed point.
+//
 // The readout is a `Display` reveal, not an `Opacity` one, because it is CONTENT shown on hover: the platform hides
 // such a reveal on Escape with the pointer still over it (WCAG 1.4.13), which it does for `Display` reveals only. The
 // crosshair is a 1px paint marking where the pointer is, not content, so it keeps its fade.
@@ -40,6 +45,10 @@ int SlotCount(Mark[] marks, string[] labels) {
 [Composable]
 [Part]
 component HoverBand(ChartCtx c, int count) {
+  // The band's own root is what `KeyMark`'s `inside HoverBand.Hover` names, and on the platforms this kit's floor admits
+  // a root wears that class only when its component declares a `variants` block — without one the pressed day's card
+  // never gave way to the pointer's. So the band's placement lives here.
+  variants { base { Position = Position.Absolute; Top = 0; Bottom = 0; Left = 0; Right = 0; } }
   // The keyboard's point: which category the readout is at, and whether it is shown. Shown only while the band has
   // the keyboard, so it can never be left open on a chart nobody is reading.
   int at = 0;
@@ -47,6 +56,10 @@ component HoverBand(ChartCtx c, int count) {
 
   // Arriving starts at the first category, every time: a reader who left and came back is not asked to remember where.
   action Arrive() { at = 0; reading = true; }
+  // A press on a cell shows THAT category. A pointer's press (a tap above all, which has no hover to read by) first
+  // focuses the band, which arrives at the first category; its click comes after, and moves the readout to the cell
+  // that was pressed. Without it a tap on any day showed the first day's readout, beside the tapped one's.
+  action Pick(int index) { at = index; reading = true; }
   action Leave() { reading = false; }
   action Dismiss() { reading = false; }
   // Every arrow moves, along the category axis in either orientation (Right and Down are "next" on a column chart and
@@ -83,13 +96,13 @@ component HoverBand(ChartCtx c, int count) {
       if (c.Horizontal) {
         Stack(position: Position.Absolute, inset: 0) {
           foreach (var i in Enumerable.Range(0, count)) {
-            HoverCell(c: c, index: i, plotW: plotW, count: count, shown: i == shownAt);
+            HoverCell(c: c, index: i, plotW: plotW, count: count, shown: i == shownAt, onPick: Pick);
           }
         }
       } else {
         Row(position: Position.Absolute, inset: 0) {
           foreach (var i in Enumerable.Range(0, count)) {
-            HoverCell(c: c, index: i, plotW: plotW, count: count, shown: i == shownAt);
+            HoverCell(c: c, index: i, plotW: plotW, count: count, shown: i == shownAt, onPick: Pick);
           }
         }
       }
@@ -114,24 +127,53 @@ string ValuesLabel(ChartCtx c) { return c.Title != "" ? $"{c.Title} values" : "C
 [AllowAnonymous]
 [Composable]
 [Part]
-component HoverCell(ChartCtx c, int index, double plotW = 0.0, int count = 0, bool shown = false) {
+component HoverCell(ChartCtx c, int index, double plotW = 0.0, int count = 0, bool shown = false, Action<int>? onPick = null) {
   variants { base { Position = Position.Relative; } }
+  action Press() { if (onPick != null) { onPick(index); } }
   render {
     // `grow`/`basis`/`w`/`h` are element props: they size this cell inside the band. The variants block holds only what
     // belongs on the component's own class, which is what the crosshair's and readout's `:hover` rules hang off.
     //
     // Orientation is handled in the render rather than in a variant, because what differs is which way the cell stacks
     // its children (a Row or a Stack), and that is a question of tree structure, not style.
+    //
+    // The press is bound on the cell's own box, and the cell is named by its readout's words ("Mar: Revenue 48K"), so
+    // a tap — and a test's `Ui.Click` — reaches a category by what it says.
     if (c.Horizontal) {
-      Row(grow: 1, basis: 0, w: "100%") {
-        Crosshair(horizontal: true, shown: shown);
-        Readout(c: c, index: index, horizontal: true, plotW: plotW, count: count, shown: shown);
+      Row(grow: 1, basis: 0, w: "100%", onClick: Press, label: ReadoutWords(c, index)) {
+        Crosshair(horizontal: true);
+        Readout(c: c, index: index, horizontal: true, plotW: plotW, count: count);
+        if (shown) { KeyMark(c: c, index: index, horizontal: true, plotW: plotW, count: count); }
       }
     } else {
-      Stack(grow: 1, basis: 0, h: "100%") {
-        Crosshair(shown: shown);
-        Readout(c: c, index: index, plotW: plotW, count: count, shown: shown);
+      Stack(grow: 1, basis: 0, h: "100%", onClick: Press, label: ReadoutWords(c, index)) {
+        Crosshair();
+        Readout(c: c, index: index, plotW: plotW, count: count);
+        if (shown) { KeyMark(c: c, index: index, plotW: plotW, count: count); }
       }
+    }
+  }
+}
+
+/// The keyboard's (or a tap's) crosshair and readout over its category: shown until the pointer comes anywhere over
+/// the band, so the pointer's own readout is the only one on the chart. Without it a press on one day and the pointer
+/// then on another painted two cards side by side.
+///
+/// It is a wrapper the size of its cell, so the crosshair and the readout inside it sit exactly where the pointer's
+/// pair does. Hiding it is a `Display` change on the wrapper, which is what makes it total: the readout inside is shown
+/// by state (`shown`), and a state cannot be overruled by a hover on the band any other way.
+[AllowAnonymous]
+[Composable]
+[Part]
+component KeyMark(ChartCtx c, int index, bool horizontal = false, double plotW = 0.0, int count = 0) {
+  variants {
+    base { Display = Display.Block; Position = Position.Absolute; Top = 0; Bottom = 0; Left = 0; Right = 0; PointerEvents = PointerEvents.None;
+           inside HoverBand.Hover { Display = Display.None; } }
+  }
+  render {
+    Box() {
+      Crosshair(horizontal: horizontal, shown: true);
+      Readout(c: c, index: index, horizontal: horizontal, plotW: plotW, count: count, shown: true);
     }
   }
 }
@@ -152,7 +194,7 @@ component Crosshair(bool horizontal = false, bool shown = false) {
     // orientations share the colour, the fade and the pointer rule, and nothing about shape: leaving `Bottom`/`W`
     // unanswered would give a horizontal rule that is also full-height and 1px wide.
     horizontal { Top = "50%"; Bottom = "auto"; Left = 0; Right = 0; W = "auto"; H = 1; }
-    // The keyboard's point (see `HoverBand`).
+    // The keyboard's point, inside a `KeyMark` (see `HoverBand`).
     shown { Opacity = 1; }
   }
   render { Box(); }
@@ -175,7 +217,8 @@ component Readout(ChartCtx c, int index, bool horizontal = false, double plotW =
     // chart's rows are short, so a centred box would sit on top of the bar it is describing. The centring transform
     // moves to the other axis with it.
     horizontal { Left = 2; Top = "50%"; TranslateY = "-50%"; }
-    // The keyboard's point (see `HoverBand`). Shown by state, so Escape hides it through `HoverBand`'s `onEscape`.
+    // The keyboard's point, inside a `KeyMark` (see `HoverBand`). Shown by state, so Escape hides it through
+    // `HoverBand`'s `onEscape`.
     shown { Display = Display.Flex; }
   }
   render {

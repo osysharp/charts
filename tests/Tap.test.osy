@@ -1,0 +1,16 @@
+// A tap on a day shows THAT day's readout, not the first (PLATFORM-709). A pointer's press focuses the chart's one
+// keyboard stop before it clicks, and arriving at the stop shows the first day; so this presses as a browser does,
+// focus first and then the click, and asserts what the live region says (the readout card itself is a CSS reveal,
+// which only the pixel tier paints).
+
+[Test]
+void A_tap_on_a_day_shows_that_days_readout_not_the_first() {
+  Ui.Visit("/");
+  Ui.Focus("CPU values");
+  Ui.Click("21 Nov: CPU 8 h");
+  Assert.Visible("21 Nov: CPU 8 h");
+  Assert.Hidden("18 Nov: CPU 2.5 h");
+  Ui.Click("23 Nov: CPU 45 s");
+  Assert.Visible("23 Nov: CPU 45 s");
+  Assert.Hidden("21 Nov: CPU 8 h");
+}

@@ -1,0 +1,17 @@
+// One readout card at a time (PLATFORM-709). A press on a day shows that day's card; the pointer then moving to
+// another day shows THAT day's card, and the pressed day's card gives way, so a mouse never sees two cards side by
+// side. The cards are CSS reveals, so only `osy test --pixels` (a real browser and a real pointer) can tell a shown
+// card from a hidden one; plain `osy test` reports the assertions after the hover NOT CHECKED. Each card is read
+// inside its own day's cell, named by its readout's words.
+
+[Test]
+void A_pressed_day_gives_way_to_the_day_the_pointer_is_over() {
+  Ui.Visit("/");
+  Ui.Click("21 Nov: CPU 8 h");
+  Assert.Visible("CPU 8 h", within: "21 Nov: CPU 8 h");
+  Ui.Hover("19 Nov: CPU 19.5 h");
+  Assert.Visible("CPU 19.5 h", within: "19 Nov: CPU 19.5 h");
+  Assert.Hidden("CPU 8 h", within: "21 Nov: CPU 8 h");
+  // The keyboard still reads the pressed day: the live region says it.
+  Assert.Visible("21 Nov: CPU 8 h");
+}

@@ -1,0 +1,7 @@
+// The producer's test project for Osysharp.Charts: the usage charts page at its root (a week of CPU time given in
+// milliseconds, a week of egress given in bytes), read by its tests for the scale's units and the readout a tap shows.
+app ChartKitTests {
+  model "model/**/*.osy";
+  tests "**/*.test.osy";
+  use Osysharp.Charts@1;
+}
